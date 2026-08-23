@@ -9,8 +9,10 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,14 +37,46 @@ static int kpq_connect_host(const char *host, int port, int timeout_ms) {
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (fd < 0) continue;
+
+        // 用非阻塞 connect + poll 真正限制连接耗时。以前直接阻塞 connect，
+        // 超时不受 timeout_ms 控制，遇到不可达代理/IP 可能卡到系统 TCP 超时。
+        int fl = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+        int rc = connect(fd, ai->ai_addr, ai->ai_addrlen);
+        if (rc != 0 && errno == EINPROGRESS) {
+            struct pollfd pfd;
+            pfd.fd = fd;
+            pfd.events = POLLOUT;
+            pfd.revents = 0;
+            int pr = poll(&pfd, 1, timeout_ms > 0 ? timeout_ms : 10000);
+            if (pr <= 0 || (pfd.revents & (POLLERR | POLLHUP))) {
+                close(fd);
+                fd = -1;
+                continue;
+            }
+            int err = 0;
+            socklen_t elen = sizeof(err);
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen);
+            if (err != 0) {
+                close(fd);
+                fd = -1;
+                continue;
+            }
+        } else if (rc != 0) {
+            close(fd);
+            fd = -1;
+            continue;
+        }
+
+        // 恢复阻塞模式，后续 send/recv 继续依赖 SO_RCVTIMEO/SO_SNDTIMEO。
+        fl = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
         if (timeout_ms > 0) {
             struct timeval tv = { timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
             setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         }
-        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
-        close(fd);
-        fd = -1;
+        break;
     }
     freeaddrinfo(res);
     kp_socket_set_bypass(0);
@@ -61,10 +95,34 @@ static int kpq_send_all(int fd, const char *buf, size_t len) {
 
 static int kpq_recv_all(int fd, uint8_t *buf, size_t cap, size_t *got) {
     size_t off = 0;
+    int header_done = 0;
+    size_t content_length = (size_t)-1;
     while (off < cap - 1) {
         ssize_t r = recv(fd, buf + off, cap - 1 - off, 0);
         if (r <= 0) break;
         off += (size_t)r;
+        buf[off] = '\0';
+
+        // 服务端可能在返回完整 body 后不立刻关闭连接。Python requests 会按
+        // Content-Length 提前返回，而这里以前一直 recv 到 EOF/超时，导致每次
+        // WUP 请求最多白等一个 timeout（15s）。这里改为按 Content-Length 收完就停。
+        if (!header_done) {
+            char *sep = strstr((char *)buf, "\r\n\r\n");
+            if (sep) {
+                header_done = 1;
+                char cl[32] = {0};
+                if (kpq_http_header(buf, off, "content-length", cl, sizeof(cl))) {
+                    content_length = (size_t)strtoull(cl, NULL, 10);
+                }
+            }
+        }
+        if (header_done && content_length != (size_t)-1) {
+            char *sep = strstr((char *)buf, "\r\n\r\n");
+            if (sep) {
+                size_t body_off = (size_t)((char *)sep - (char *)buf) + 4;
+                if (off - body_off >= content_length) break;
+            }
+        }
     }
     buf[off] = '\0';
     *got = off;

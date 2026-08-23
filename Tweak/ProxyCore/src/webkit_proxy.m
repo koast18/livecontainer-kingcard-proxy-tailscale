@@ -14,13 +14,40 @@
 extern void proxychains_write_log(char *str, ...);
 
 static nw_proxy_config_t g_lc_proxy_config;
-// 上一代 config：WKWebsiteDataStore.setProxyConfigurations: 接收 nw_proxy_config
-// 数组时通常不为其元素做强引用（nw_proxy_config 是 CF 类型）。因此 reload 时若
-// 立即 nw_release 旧 config，WebKit 下载/网络栈仍可能持有已释放指针 → UAF 崩溃
+// WKWebsiteDataStore.setProxyConfigurations: 接收 nw_proxy_config 数组时通常不
+// 为其元素做强引用（nw_proxy_config 是 CF 类型）。因此 reload 时若立即
+// nw_release 旧 config，WebKit 下载/网络栈仍可能持有已释放指针 → UAF 崩溃
 // （症状：调起系统下载组件、或高速下载时闪退）。
-// 这里把旧 config 延迟一代再释放：任意时刻最多保留 2 个 config，且被释放的那个
-// 早在上一轮 reload 就已不再交给任何 store，彻底消除释放后仍被使用的问题。
-static nw_proxy_config_t g_lc_proxy_config_old;
+// 只延迟一代仍不够：短时间内连续 reload 时，WebKit 的多个 data store / 多个下载
+// 可能分别持有不同代的 config。这里保留最多 3 个旧 config，超过后才释放最旧一个，
+// 显著降低多代 UAF 风险。
+#define LC_WEBKIT_MAX_OLD_PROXY_CONFIGS 3
+static nw_proxy_config_t g_lc_proxy_config_old[LC_WEBKIT_MAX_OLD_PROXY_CONFIGS];
+static int g_lc_proxy_config_old_count = 0;
+
+static void lc_release_oldest_proxy_config(void) {
+    if (g_lc_proxy_config_old_count < LC_WEBKIT_MAX_OLD_PROXY_CONFIGS)
+        return;
+    if (g_lc_proxy_config_old[0]) {
+        nw_release(g_lc_proxy_config_old[0]);
+        proxychains_write_log("[proxychains] webkit proxy: released oldest stale proxy config\n");
+    }
+    for (int i = 1; i < LC_WEBKIT_MAX_OLD_PROXY_CONFIGS; i++) {
+        g_lc_proxy_config_old[i - 1] = g_lc_proxy_config_old[i];
+        g_lc_proxy_config_old[i] = NULL;
+    }
+    g_lc_proxy_config_old_count--;
+}
+
+static void lc_retire_current_proxy_config(void) {
+    if (!g_lc_proxy_config)
+        return;
+    lc_release_oldest_proxy_config();
+    if (g_lc_proxy_config_old_count < LC_WEBKIT_MAX_OLD_PROXY_CONFIGS) {
+        g_lc_proxy_config_old[g_lc_proxy_config_old_count++] = g_lc_proxy_config;
+    }
+    g_lc_proxy_config = NULL;
+}
 
 static int lc_parse_proxy(char *host, size_t hostlen,
                           char *port, size_t portlen,
@@ -244,14 +271,9 @@ void livecontainer_install_webkit_proxy(void) {
 
 void livecontainer_reload_webkit_proxy(void) {
     proxychains_write_log("[proxychains] webkit proxy reload: begin\n");
-    // 释放"上一代"config（上一轮 reload 前交给 WebKit 的那一个）。
     // 当前 g_lc_proxy_config 降级为 old 保留——WebKit 极可能仍持有它。
-    if (g_lc_proxy_config_old) {
-        nw_release(g_lc_proxy_config_old);
-        proxychains_write_log("[proxychains] webkit proxy reload: released stale proxy config\n");
-    }
-    g_lc_proxy_config_old = g_lc_proxy_config;
-    g_lc_proxy_config = NULL;
+    // 只有当保留的旧 config 超过 3 个时，才释放最旧的一个。
+    lc_retire_current_proxy_config();
     if (!lc_create_proxy_config()) {
         proxychains_write_log("[proxychains] webkit proxy reload: no usable HTTP proxy found\n");
         Class wds = NSClassFromString(@"WKWebsiteDataStore");

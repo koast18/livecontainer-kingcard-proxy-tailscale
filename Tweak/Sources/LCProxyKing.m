@@ -15,7 +15,10 @@ static const NSTimeInterval LCProxyKingRefreshLeadTime = 2 * 60;
 
 static int LCProxyKingRefreshHook(void *ctx) {
     LCProxyKing *king = (__bridge LCProxyKing *)ctx;
-    return [king refreshCredentials] ? 0 : -1;
+    // 被动刷新是由实际转发失败触发的，不能信任本地缓存的 tokenExpireEpoch：
+    // 服务器宣称的有效期可能比真实有效期更长，普通 refreshCredentials 会误以为
+    // 凭证仍新鲜而继续复用已失效的 Q-Token。这里强制重新取号。
+    return [king refreshCredentialsForce] ? 0 : -1;
 }
 
 static void LCProxyKingLog(const char *line) {
@@ -96,6 +99,8 @@ static BOOL LCProxyKingHexStringValid(NSString *s) {
         shouldRun = NO;
     }
     NSString *signature = [self settingsSignature:settings];
+    kp_forwarder *oldForwarder = NULL;
+    kp_forwarder *newForwarder = NULL;
 
     [self.lock lock];
     BOOL alreadyRunning = shouldRun && self.forwarder != NULL && kp_forwarder_is_running(self.forwarder) == 1;
@@ -115,42 +120,69 @@ static BOOL LCProxyKingHexStringValid(NSString *s) {
         return;
     }
 
+    [self stopRefreshTimer];
+
     if (!shouldRun) {
-        [self stopRefreshTimer];
-        if (self.forwarder) {
-            kp_forwarder_stop(self.forwarder);
-            kp_forwarder_free(self.forwarder);
-            self.forwarder = NULL;
-        }
+        oldForwarder = self.forwarder;
+        self.forwarder = NULL;
         self.lastSettingsSignature = nil;
+        [self.lock unlock];
+        // 不要在持有 self.lock 时 stop/free：kp_forwarder_stop 会等待所有 client
+        // 线程退出，而 client 线程失败重试时可能正在等待 self.lock 做取号刷新，
+        // 持锁等待会形成死锁。
+        if (oldForwarder) {
+            kp_forwarder_stop(oldForwarder);
+            kp_forwarder_free(oldForwarder);
+        }
+        return;
+    }
+
+    // shouldRun 但当前没有 running 的转发器：先摘除旧引用并释放锁，再安全 stop/free。
+    oldForwarder = self.forwarder;
+    self.forwarder = NULL;
+    self.lastSettingsSignature = signature;
+    [self.lock unlock];
+
+    if (oldForwarder) {
+        kp_forwarder_stop(oldForwarder);
+        kp_forwarder_free(oldForwarder);
+    }
+
+    newForwarder = kp_forwarder_new("127.0.0.1", 0, "", 0);
+    if (!newForwarder) {
+        [self.lock lock];
+        self.lastError = @"转发器启动失败";
+        self.lastRefreshSuccess = NO;
         [self.lock unlock];
         return;
     }
-    if (self.forwarder) {
-        kp_forwarder_stop(self.forwarder);
-        kp_forwarder_free(self.forwarder);
-        self.forwarder = NULL;
+    kp_forwarder_set_refresh_hook(newForwarder, LCProxyKingRefreshHook, (__bridge void *)self);
+    if (kp_forwarder_start(newForwarder) != 0) {
+        kp_forwarder_free(newForwarder);
+        [self.lock lock];
+        self.lastError = @"转发器启动失败";
+        self.lastRefreshSuccess = NO;
+        [self.lock unlock];
+        return;
     }
-    [self stopRefreshTimer];
-    self.lastSettingsSignature = signature;
-    kp_forwarder *fw = kp_forwarder_new("127.0.0.1", 0, "", 0);
-    if (fw) {
-        kp_forwarder_set_refresh_hook(fw, LCProxyKingRefreshHook, (__bridge void *)self);
-        if (kp_forwarder_start(fw) == 0) {
-            self.forwarder = fw;
-            [self.lock unlock];
-            [self loadCachedStateIntoForwarder];
-            [self startRefreshTimer];
-            if (![self hasFreshCachedState]) {
-                [self refreshCredentialsAsync];
-            }
-            return;
+
+    [self.lock lock];
+    // 创建/启动新转发器期间锁已释放，可能已有另一次 applyConfig 改动了模式。
+    // 只有当前仍然应该运行、且还没有安装新转发器时，才把 newForwarder 装上。
+    if (self.forwarder == NULL && [self.lastSettingsSignature isEqualToString:signature]) {
+        self.forwarder = newForwarder;
+        [self.lock unlock];
+        [self loadCachedStateIntoForwarder];
+        [self startRefreshTimer];
+        if (![self hasFreshCachedState]) {
+            [self refreshCredentialsAsync];
         }
-        kp_forwarder_free(fw);
+        return;
     }
-    self.lastError = @"转发器启动失败";
-    self.lastRefreshSuccess = NO;
+
     [self.lock unlock];
+    kp_forwarder_stop(newForwarder);
+    kp_forwarder_free(newForwarder);
 }
 
 - (NSString *)settingsSignature:(NSDictionary *)settings {
@@ -559,11 +591,12 @@ static const NSUInteger LCProxyKingRefreshLogMax = 20;
             state[@"token"] = token;
             state[@"key"] = qkey;
             NSNumber *expire = tokInfo[@"expire_seconds"];
-            if ([expire isKindOfClass:[NSNumber class]] && expire.integerValue > 0) {
-                state[@"tokenExpireEpoch"] = @(nowEpoch + expire.doubleValue);
-            } else {
-                state[@"tokenExpireEpoch"] = @(nowEpoch + 7200.0);
-            }
+            // 服务器宣称的有效期可能偏长，Q-Token 实际会更早失效。
+            // 按 80% 有效期设置本地过期时间，并至少保留 60 秒，提前触发主动刷新。
+            double rawExpire = ([expire isKindOfClass:[NSNumber class]] && expire.integerValue > 0) ? expire.doubleValue : 7200.0;
+            double effectiveExpire = rawExpire * 0.8;
+            if (effectiveExpire < 60.0) effectiveExpire = 60.0;
+            state[@"tokenExpireEpoch"] = @(nowEpoch + effectiveExpire);
             self.lastSource = [NSString stringWithFormat:@"token-%@", tokInfo[@"mode"] ?: @"?"];
             NSNumber *expireSeconds = tokInfo[@"expire_seconds"];
             [steps appendFormat:@"Q-Token: %@\nQ-Key: %@\nQ-Token mode=%@ 有效期=%@s\n",

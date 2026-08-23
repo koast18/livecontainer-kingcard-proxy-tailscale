@@ -439,17 +439,17 @@ $('testProxyBtn').onclick = async () => {
     'http://ip-api.com/line/?fields=query',
     'http://myip.ipip.net'
   ];
-  $('proxyTestMsg').textContent = '开始测试…';
+  $('proxyTestMsg').textContent = '开始并发测试…';
   $('proxyTestDetail').textContent = '';
-  let found = null;
-  for (const url of sources) {
+  const results = await Promise.all(sources.map(async (url) => {
     const r = await api('/api/proxy-test-one', {method:'POST', body: JSON.stringify({url})});
     const info = r.ip ? ('IP '+r.ip) : ('rc='+(r.rc!=null?r.rc:'?')+(r.body?' '+r.body:''));
     $('proxyTestDetail').textContent += url + ' -> ' + info + '\n';
-    if (!found && r.ok && r.ip) found = {ip:r.ip, source:url};
-  }
+    return {url, r};
+  }));
+  const found = results.find(x => x.r.ok && x.r.ip);
   if (found) {
-    $('proxyTestMsg').textContent = '出口 IP: '+found.ip+'（'+found.source+'，共测试 '+sources.length+' 个源）';
+    $('proxyTestMsg').textContent = '出口 IP: '+found.r.ip+'（'+found.url+'，共测试 '+sources.length+' 个源，并发完成）';
   } else {
     $('proxyTestMsg').textContent = '所有 IP 源均失败，请检查代理/转发器';
   }

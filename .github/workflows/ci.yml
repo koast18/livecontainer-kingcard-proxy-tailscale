@@ -23,6 +23,8 @@ jobs:
         run: bash Scripts/test_foreground_reload_logic.sh
       - name: Proxy override unit tests
         run: bash Scripts/test_proxy_override.sh
+      - name: Alook high-download crash guard static checks
+        run: bash Scripts/test_alook_crash_guard.sh
 
       - name: Async proxy relay test
         run: bash Scripts/test_async_proxy.sh

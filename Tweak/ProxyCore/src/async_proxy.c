@@ -24,6 +24,27 @@ extern unsigned int proxychains_max_chain;
 #define MSG_NOSIGNAL 0
 #endif
 
+// 异步 relay 线程同样参与“大流量下载线程风暴”风险：每个非阻塞 connect 都会
+// 创建一个 detached relay 线程。这里加一个全局活跃上限，超过后让调用方回退到
+// 同步代理路径，避免无限创建线程耗尽 iOS 进程资源。
+#define LC_ASYNC_MAX_RELAY_THREADS 64
+static int g_lc_async_relay_count = 0;
+
+static int lc_async_relay_try_acquire(void) {
+    int cur = __atomic_load_n(&g_lc_async_relay_count, __ATOMIC_RELAXED);
+    while (cur < LC_ASYNC_MAX_RELAY_THREADS) {
+        if (__atomic_compare_exchange_n(&g_lc_async_relay_count, &cur, cur + 1,
+                                        0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void lc_async_relay_release(void) {
+    __atomic_sub_fetch(&g_lc_async_relay_count, 1, __ATOMIC_RELAXED);
+}
+
 static void disable_sigpipe(int fd) {
 #ifdef SO_NOSIGPIPE
     int one = 1;
@@ -133,6 +154,7 @@ static void *relay_worker(void *arg) {
     if (up >= 0) close(up);
     close(job->peer_fd);
     free(job);
+    lc_async_relay_release();
     return NULL;
 }
 
@@ -218,14 +240,21 @@ static int make_local_tcp_pair(int sock, int v6, int orig_flags, int *peer_fd) {
 
 int lcproxy_async_connect_start(int sock, ip_type target_ip,
                                 unsigned short target_port, int orig_flags) {
+    if (!lc_async_relay_try_acquire()) {
+        // 并发 relay 线程已满：回退到调用方的同步代理路径。
+        return -1;
+    }
+
     int peer_fd = -1;
     if (make_local_tcp_pair(sock, target_ip.is_v6, orig_flags, &peer_fd) != 0) {
+        lc_async_relay_release();
         return -1;
     }
 
     async_connect_job *job = calloc(1, sizeof(*job));
     if (!job) {
         close(peer_fd);
+        lc_async_relay_release();
         return -1;
     }
 
@@ -237,6 +266,7 @@ int lcproxy_async_connect_start(int sock, ip_type target_ip,
     if (pthread_create(&thread, NULL, relay_worker, job) != 0) {
         free(job);
         close(peer_fd);
+        lc_async_relay_release();
         return -1;
     }
     pthread_detach(thread);

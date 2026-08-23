@@ -1344,6 +1344,25 @@ static int kp_parse_status_code(const char *buf, size_t len) {
     return atoi(sp + 1);
 }
 
+// 这些状态码通常表示 Q-Token/Q-Key 失效或代理池需要刷新。
+// 820/821/823 是现有刷新码；800/801 经确认不是凭证失效信号，不在这里处理。
+static int kp_code_needs_credential_refresh(int code) {
+    switch (code) {
+        case 820:
+        case 821:
+        case 823:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// 有些 HTTPS 代理会在 CONNECT 200 后直接返回一段 HTTP 错误文本而不是 TLS 数据，
+// 这通常也意味着凭证已失效。这里用“多余字节以 HTTP/ 开头”作为保守判据。
+static int kp_extra_is_http_error(const char *buf, size_t len) {
+    return len >= 5 && strncasecmp(buf, "HTTP/", 5) == 0;
+}
+
 static void kp_millis_string(char *out, size_t out_cap) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -1656,11 +1675,7 @@ static void kp_handle_client(kp_forwarder *fw, int client) {
             int code = kp_parse_status_code(resp, rgot);
             kp_dbg("[fw] queen_http %s:%d -> code=%d", proxy_host, proxy_port, code);
 
-            if (code == 820 || code == 821) {
-                KP_CLOSESOCK(up);
-                continue;
-            }
-            if (code == 823) {
+            if (kp_code_needs_credential_refresh(code)) {
                 KP_CLOSESOCK(up);
                 continue;
             }
@@ -1783,11 +1798,7 @@ https_retry:
         int code = kp_parse_status_code(resp, rgot);
         kp_dbg("[fw] queen_https %s:%d CONNECT -> code=%d", proxy_host, proxy_port, code);
 
-        if (code == 820 || code == 821) {
-            KP_CLOSESOCK(up);
-            continue;
-        }
-        if (code == 823) {
+        if (kp_code_needs_credential_refresh(code)) {
             KP_CLOSESOCK(up);
             continue;
         }
@@ -1814,6 +1825,16 @@ https_retry:
             return;
         }
         if (code == 200) {
+            char *body = strstr(resp, "\r\n\r\n");
+            size_t consumed = body ? (size_t)(body - resp + 4) : rgot;
+            size_t extra_len = rgot - consumed;
+            // 部分 HTTPS 代理在 token 失效时仍会回 200，但后面跟的是 HTTP 错误文本
+            // 而不是 TLS 数据。这里在把 200 转发给客户端之前先识别这种伪成功。
+            if (extra_len > 0 && kp_extra_is_http_error(resp + consumed, extra_len)) {
+                kp_dbg("[fw] queen_https CONNECT 200 but extra data is HTTP error (likely token invalid)");
+                KP_CLOSESOCK(up);
+                continue;
+            }
             struct timeval zero = {0, 0};
             setsockopt(up, SOL_SOCKET, SO_RCVTIMEO, &zero, sizeof(zero));
             setsockopt(up, SOL_SOCKET, SO_SNDTIMEO, &zero, sizeof(zero));
@@ -1823,13 +1844,10 @@ https_retry:
                 KP_CLOSESOCK(client);
                 return;
             }
-                        char *body = strstr(resp, "\r\n\r\n");
-            size_t consumed = body ? (size_t)(body - resp + 4) : rgot;
             uint64_t up_recv_extra = 0;
             if (consumed < rgot) {
-                size_t extra = rgot - consumed;
-                kp_send_all(client, resp + consumed, extra);
-                up_recv_extra = (uint64_t)extra;
+                kp_send_all(client, resp + consumed, extra_len);
+                up_recv_extra = (uint64_t)extra_len;
             }
             uint64_t client_to_up = 0;
             uint64_t up_to_client = up_recv_extra;
@@ -1841,6 +1859,13 @@ https_retry:
             kp_pipe_bidirectional_counted(up, client, &up_to_client, &client_to_up);
             kp_dbg("[fw] CONNECT conn done host=%s:%d client_to_up=%llu up_to_client=%llu",
                    host, port, (unsigned long long)client_to_up, (unsigned long long)up_to_client);
+            // 隧道已建立但客户端发了数据后上游一个字节都没回就关闭，常见于：
+            // Q-Token 已失效/代理节点异常导致 TLS handshake 被对端直接终止。
+            // 这里主动触发一次强制刷新，让后续连接有机会用新凭证恢复。
+            if (up_to_client == 0 && client_to_up > 0) {
+                kp_dbg("[fw] CONNECT closed before upstream data (likely handshake failure), refreshing credentials");
+                kp_forwarder_refresh_retry(fw, 2, 300);
+            }
             KP_CLOSESOCK(up);
             KP_CLOSESOCK(client);
             return;
