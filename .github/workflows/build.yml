@@ -4,6 +4,14 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      update_altstore_source:
+        description: 'Update AltStore source after build'
+        type: boolean
+        default: true
+      altstore_branch:
+        description: 'Branch to push updated AltStore source'
+        default: 'feature/tailscale-integration'
 
 jobs:
   build:
@@ -38,6 +46,26 @@ jobs:
               "build/LCTailscaleControl-${VER}.dylib" \
               "build/LiveProxyTailscaleConsole-${VER}.ipa" --clobber
           fi
+      - name: Update AltStore source (optional/auto)
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.update_altstore_source == 'true')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALTSTORE_BRANCH: ${{ github.event.inputs.altstore_branch || 'feature/tailscale-integration' }}
+        run: |
+          set -euo pipefail
+          git config user.name "koast18"
+          git config user.email "33443247+koast18@users.noreply.github.com"
+          git checkout "$ALTSTORE_BRANCH" 2>/dev/null || git checkout -b "$ALTSTORE_BRANCH"
+          ./Scripts/update_altstore_source.sh "${{ github.repository }}" "" "$ALTSTORE_BRANCH"
+          if git diff --quiet AltStore/altstore-source.json; then
+            echo "AltStore source unchanged"
+          else
+            git add AltStore/altstore-source.json
+            git commit -m "chore: update AltStore source to $(cat version.txt | tr -d ' \r\n')"
+
+            git push origin "$ALTSTORE_BRANCH"
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

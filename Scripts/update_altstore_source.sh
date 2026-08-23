@@ -1,6 +1,6 @@
 #!/bin/bash
 # Regenerate AltStore/altstore-source.json from version.txt.
-# Usage: ./Scripts/update_altstore_source.sh [owner/repo] [ipa_size]
+# Usage: ./Scripts/update_altstore_source.sh [owner/repo] [ipa_size] [branch]
 #   ipa_size：必填的 public IP 的下载真实字节数（AltStore 用它校验文件完整性，
 #   写错会装不上——常见旧脚本硬编码导致源头"看似没更新"）。
 #   也可不传，脚本优先读本地 build/IPA，否则自动从 GitHub Release API 获取。
@@ -33,7 +33,7 @@ cat > AltStore/altstore-source.json <<JSON
 {
   "name": "LiveProxy Tailscale 源",
   "identifier": "com.liveproxy.tailscale.source",
-  "sourceURL": "https://raw.githubusercontent.com/${REPO}/master/AltStore/altstore-source.json",
+  "sourceURL": "https://raw.githubusercontent.com/${REPO}/${BRANCH}/AltStore/altstore-source.json",
   "apps": [
     {
       "name": "LiveProxy Tailscale 控制台",
@@ -44,7 +44,7 @@ cat > AltStore/altstore-source.json <<JSON
       "versionDescription": "LiveProxy Tailscale 控制台：LiveContainer 任意 App HTTP 代理开关、非 TCP 丢弃、10 分钟粒度蜂窝流量统计。首次打开自动下载 dylib。",
       "downloadURL": "https://gh-proxy.com/https://github.com/${REPO}/releases/download/${TAG}/LiveProxyTailscaleConsole-${VER}.ipa",
       "localizedDescription": "LiveContainer 内任意 App 走 HTTP 代理的控制台 IPA。依赖 LCTailscaleControl dylib（自动下载到 LiveContainer Tweaks 目录），支持代理开关、丢弃非 TCP、蜂窝网络上传/下载流量统计（10 分钟时段）。",
-      "iconURL": "https://raw.githubusercontent.com/${REPO}/master/AltStore/icon.png",
+      "iconURL": "https://raw.githubusercontent.com/${REPO}/${BRANCH}/AltStore/icon.png",
       "tintColor": "2E7D32",
       "size": ${IPLEN},
       "versions": [
