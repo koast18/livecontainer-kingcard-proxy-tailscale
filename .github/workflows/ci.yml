@@ -43,8 +43,8 @@ jobs:
       - name: Verify Tailscale control artifacts
         run: |
           set -euo pipefail
-          VER="$(cat version.txt | tr -d ' 
-')"
+          VER="$(cat version.txt | tr -d ' \r\n')"
+
           test -f "build/LCTailscaleControl-${VER}.dylib"
           test -f "build/LiveProxyTailscaleConsole-${VER}.ipa"
           nm -gU "build/LCTailscaleControl-${VER}.dylib" | grep -E ' _tailscale_(new|set_proxy|set_disable_p2p|get_full_status_json|set_exit_node)$'
