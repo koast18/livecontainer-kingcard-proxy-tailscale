@@ -35,10 +35,10 @@ jobs:
       - name: Queen WUP binary comparison
         run: bash Scripts/test_queen_wup_compare.sh
 
-      - name: Build dylib (compile/link check)
+      - name: Build dylib and control IPA (compile/link check)
         run: |
           set -euo pipefail
-          ./Scripts/build_ios.sh
+          ./Scripts/build_all.sh
 
       - name: Verify Tailscale control artifacts
         run: |
