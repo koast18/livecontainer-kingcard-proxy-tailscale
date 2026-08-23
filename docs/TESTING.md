@@ -107,15 +107,15 @@ Build dylib (compile/link check)
   - `async start returned in 0 ms`
   - `echo OK: hello-async-proxy`
   - `WUP binary comparison OK`
-  - `build/LCProxyControl.dylib: Mach-O 64-bit dynamically linked shared library arm64`
+  - `build/LCTailscaleControl.dylib: Mach-O 64-bit dynamically linked shared library arm64`
 
 ## 5. 真机人工测试（最终确认）
 
 CI 只能验证逻辑和编译，最终仍需真机确认动画流畅度：
 
 1. 从 CI 的 `Build dylib` artifact 或本地构建取得：
-   - `build/LCProxyControl.dylib`
-   - `build/LiveProxyConsole.ipa`
+   - `build/LCTailscaleControl.dylib`
+   - `build/LiveProxyTailscaleConsole.ipa`
 2. 导入 LiveContainer，并让 PiliPlus 等目标 App 加载 dylib。
 3. 开启自定义/王卡代理模式。
 4. 进入 PiliPlus 首页/视频页，触发网络请求。

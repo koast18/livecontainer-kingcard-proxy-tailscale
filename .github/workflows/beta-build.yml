@@ -20,7 +20,7 @@ jobs:
       - name: Build beta dylib and IPA
         env:
           LC_PROXY_UPDATE_TAG: ${{ github.event.inputs.tag }}
-          LC_PROXY_BETA_BUNDLE_ID: com.liveproxy.console.beta
+          LC_PROXY_BETA_BUNDLE_ID: com.liveproxy.tailscale.console.beta
         run: |
           set -euo pipefail
           ./Scripts/build_all.sh
@@ -32,8 +32,8 @@ jobs:
         run: |
           set -euo pipefail
           VER="$(cat version.txt | tr -d ' \r\n')"
-          DYLIB="build/LCProxyControl-${VER}.dylib"
-          IPA="build/LiveProxyConsole-${VER}.ipa"
+          DYLIB="build/LCTailscaleControl-${VER}.dylib"
+          IPA="build/LiveProxyTailscaleConsole-${VER}.ipa"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" "$DYLIB" "$IPA" \
               --prerelease \

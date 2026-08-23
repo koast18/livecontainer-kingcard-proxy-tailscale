@@ -68,7 +68,7 @@ static NSMutableString *gDiag = nil;
     if (!url) return nil;
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
     req.timeoutInterval = 60;
-    [req setValue:@"LiveProxyConsole/1.0" forHTTPHeaderField:@"User-Agent"];
+    [req setValue:@"LiveProxyTailscaleConsole/1.0" forHTTPHeaderField:@"User-Agent"];
     NSHTTPURLResponse *resp = nil;
     NSError *err = nil;
     NSData *data = [NSURLConnection sendSynchronousRequest:req returningResponse:&resp error:&err];
@@ -113,8 +113,8 @@ static NSMutableString *gDiag = nil;
     NSArray *bestVer = nil;
     for (NSDictionary *a in assets) {
         NSString *name = a[@"name"];
-        if (![name hasPrefix:@"LCProxyControl-"] || ![name hasSuffix:@".dylib"]) continue;
-        NSString *ver = [name substringFromIndex:@"LCProxyControl-".length];
+        if (![name hasPrefix:@"LCTailscaleControl-"] || ![name hasSuffix:@".dylib"]) continue;
+        NSString *ver = [name substringFromIndex:@"LCTailscaleControl-".length];
         ver = [ver substringToIndex:ver.length - 6];
         NSArray *parts = [ver componentsSeparatedByString:@"."];
         BOOL numeric = YES;
@@ -128,7 +128,7 @@ static NSMutableString *gDiag = nil;
         }
     }
     if (best) [self diag:@"[资产] 最新 dylib: %@", best];
-    else [self diag:@"[资产] 未找到 LCProxyControl-*.dylib 资产"];
+    else [self diag:@"[资产] 未找到 LCTailscaleControl-*.dylib 资产"];
     return best;
 }
 
@@ -179,7 +179,7 @@ static NSMutableString *gDiag = nil;
 + (void)cleanOldDylibsIn:(NSString *)dir keep:(NSString *)keep {
     NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
     for (NSString *f in files) {
-        if ([f hasPrefix:@"LCProxyControl-"] && [f hasSuffix:@".dylib"] && ![f isEqualToString:keep]) {
+        if ([f hasPrefix:@"LCTailscaleControl-"] && [f hasSuffix:@".dylib"] && ![f isEqualToString:keep]) {
             [[NSFileManager defaultManager] removeItemAtPath:[dir stringByAppendingPathComponent:f] error:nil];
             [self diag:@"[清理] %@", f];
         }

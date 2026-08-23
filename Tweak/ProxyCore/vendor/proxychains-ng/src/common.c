@@ -94,7 +94,7 @@ char *get_config_path(char* default_path, char* pbuf, size_t bufsize) {
 		return NULL;
 	*slash = '\0';
 
-	// Only read the config file managed by LCProxyControl.
+	// Only read the config file managed by LCTailscaleControl.
 	// This avoids interference from other proxychains.conf files on the system.
 	// The dylib may be installed in <shared root>/Tweaks or a subfolder of Tweaks
 	// (LiveContainer shared-app mode). In both cases the managed config lives in

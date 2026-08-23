@@ -24,7 +24,7 @@
   - 只在检测到蜂窝网络（无 Wi-Fi）时累计。
   - 每个 App 进程独立落盘，控制台汇总所有 App。
 - **本地 Web 控制台**：dylib 内嵌 HTTP 服务（`127.0.0.1:19092`），控制 IPA 用 WKWebView 打开。
-- **首次自动安装 dylib**：控制 IPA 首次打开会从 GitHub Release 下载 `LCProxyControl-<version>.dylib` 到 LiveContainer 的 `Tweaks` 目录，签名后重启即可。
+- **首次自动安装 dylib**：控制 IPA 首次打开会从 GitHub Release 下载 `LCTailscaleControl-<version>.dylib` 到 LiveContainer 的 `Tweaks` 目录，签名后重启即可。
 
 ## 仓库结构
 
@@ -50,8 +50,8 @@ AltStore/           AltStore 源
 
 产物：
 
-- `build/LCProxyControl.dylib` / `LCProxyControl-<version>.dylib`
-- `build/LiveProxyConsole.ipa` / `LiveProxyConsole-<version>.ipa`
+- `build/LCTailscaleControl.dylib` / `LCTailscaleControl-<version>.dylib`
+- `build/LiveProxyTailscaleConsole.ipa` / `LiveProxyTailscaleConsole-<version>.ipa`
 
 两个产物均**故意不签名**，由 LiveContainer 导入/签名时用你导入的证书处理。
 
@@ -74,13 +74,13 @@ GitHub Actions 会自动在 push/PR 时运行 CI，包含：
 
 ## 使用
 
-1. 将 `LiveProxyConsole.ipa` 导入 LiveContainer 并打开。
+1. 将 `LiveProxyTailscaleConsole.ipa` 导入 LiveContainer 并打开。
 2. 首次打开会自动下载 dylib 到 LiveContainer `Tweaks` 目录，按提示退出并重新打开。
 3. 重新打开后进入控制台：
    - 直连：选择“直连（无代理）”，打开「启用代理」后所有流量不经过上游代理。
    - 自定义代理：选择“自定义代理”，填写代理地址/端口，打开「启用代理」。
    - 王卡代理：选择“王卡代理”，可修改上游地址/端口与取号接口，打开「启用代理」；保存后会自动取号并每 2 分钟自动刷新。可在王卡设置中开启“非蜂窝网络自动直连”。
-4. 被代理的 App 也需在 LiveContainer 中加载 `LCProxyControl.dylib`（通常配置为全部 App 注入）。
+4. 被代理的 App 也需在 LiveContainer 中加载 `LCTailscaleControl.dylib`（通常配置为全部 App 注入）。
 
 ## AltStore 源
 
@@ -111,10 +111,10 @@ GPLv2（proxychains-ng 与派生代码），GCDWebServer 为 Apache-2.0。
 
 - 在控制台「代理」页选择 **Tailscale** 模式，并在「Tailscale」页配置节点与 Exit Node。
 - 整体链路：
-  `用户 App -> LCProxyControl SOCKS5 -> 嵌入式 Tailscale -> DERP -> 王卡代理 -> 公网`
+  `用户 App -> LCTailscaleControl SOCKS5 -> 嵌入式 Tailscale -> DERP -> 王卡代理 -> 公网`
 - Tailscale 强制 `TS_DEBUG_ALWAYS_USE_DERP=1` / `TS_DEBUG_NEVER_DIRECT_UDP=1`，关闭 P2P 直连和 UDP 打洞。
 - Tailscale 的 control plane 和 DERP 外连都通过本进程的 KingCard 本地转发器 HTTP 代理。
 - 可在 Tailscale 页面选择/启用 Exit Node，通过 `/api/tailscale/exit-node` 动态切换。
 
 构建时会从 `tailscale-ios-dylib` Release 自动下载 `libtailscale_ios.a`（当前默认 `v0.2.0`），
-与现有 proxychains 核心一起链接进 `LCProxyControl.dylib`。
+与现有 proxychains 核心一起链接进 `LCTailscaleControl.dylib`。

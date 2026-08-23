@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 
 king = Path('Tweak/Sources/LCProxyKing.m').read_text(encoding='utf-8')
-control = Path('Tweak/Sources/LCProxyControl.m').read_text(encoding='utf-8')
+control = Path('Tweak/Sources/LCTailscaleControl.m').read_text(encoding='utf-8')
 
 # Preemptive refresh lead time must exist.
 assert 'LCProxyKingRefreshLeadTime = 2 * 60;' in king, \

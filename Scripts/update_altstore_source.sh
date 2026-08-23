@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 REPO="${1:-koast18/livecontainer-kingcard-proxy}"
 VER="$(cat version.txt | tr -d ' \r\n')"
 TAG="v${VER}"
-IPA="build/LiveProxyConsole-${VER}.ipa"
+IPA="build/LiveProxyTailscaleConsole-${VER}.ipa"
 IPLEN="${2:-}"
 if [ -z "$IPLEN" ] && [ -f "$IPA" ]; then
   if command -v gstat >/dev/null 2>&1; then
@@ -21,9 +21,9 @@ if [ -z "$IPLEN" ] && [ -f "$IPA" ]; then
   fi
 fi
 if [ -z "$IPLEN" ]; then
-  # 从 Release API 读取该 tag 下 LiveProxyConsole-*.ipa 的实际字节数
+  # 从 Release API 读取该 tag 下 LiveProxyTailscaleConsole-*.ipa 的实际字节数
   IPLEN="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/tags/$TAG" | \
-    sed -n 's/.*"name":"LiveProxyConsole-[^"]*\.ipa","size":\([0-9]*\).*/\1/p' | head -1)"
+    sed -n 's/.*"name":"LiveProxyTailscaleConsole-[^"]*\.ipa","size":\([0-9]*\).*/\1/p' | head -1)"
 fi
 if [ -z "$IPLEN" ] || ! [ "$IPLEN" -gt 0 ] 2>/dev/null; then
   echo "ERROR: 无法确定 IPA size（本地无 build 且 Release 查询失败）。用 --size 显式传入。" >&2
@@ -31,19 +31,19 @@ if [ -z "$IPLEN" ] || ! [ "$IPLEN" -gt 0 ] 2>/dev/null; then
 fi
 cat > AltStore/altstore-source.json <<JSON
 {
-  "name": "LiveProxy 源",
-  "identifier": "com.liveproxy.source",
+  "name": "LiveProxy Tailscale 源",
+  "identifier": "com.liveproxy.tailscale.source",
   "sourceURL": "https://raw.githubusercontent.com/${REPO}/master/AltStore/altstore-source.json",
   "apps": [
     {
-      "name": "LiveProxy 控制台",
-      "bundleIdentifier": "com.liveproxy.console",
+      "name": "LiveProxy Tailscale 控制台",
+      "bundleIdentifier": "com.liveproxy.tailscale.console",
       "developerName": "koast18",
       "version": "${VER}",
       "versionDate": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-      "versionDescription": "LiveProxy 控制台：LiveContainer 任意 App HTTP 代理开关、非 TCP 丢弃、10 分钟粒度蜂窝流量统计。首次打开自动下载 dylib。",
-      "downloadURL": "https://gh-proxy.com/https://github.com/${REPO}/releases/download/${TAG}/LiveProxyConsole-${VER}.ipa",
-      "localizedDescription": "LiveContainer 内任意 App 走 HTTP 代理的控制台 IPA。依赖 LCProxyControl dylib（自动下载到 LiveContainer Tweaks 目录），支持代理开关、丢弃非 TCP、蜂窝网络上传/下载流量统计（10 分钟时段）。",
+      "versionDescription": "LiveProxy Tailscale 控制台：LiveContainer 任意 App HTTP 代理开关、非 TCP 丢弃、10 分钟粒度蜂窝流量统计。首次打开自动下载 dylib。",
+      "downloadURL": "https://gh-proxy.com/https://github.com/${REPO}/releases/download/${TAG}/LiveProxyTailscaleConsole-${VER}.ipa",
+      "localizedDescription": "LiveContainer 内任意 App 走 HTTP 代理的控制台 IPA。依赖 LCTailscaleControl dylib（自动下载到 LiveContainer Tweaks 目录），支持代理开关、丢弃非 TCP、蜂窝网络上传/下载流量统计（10 分钟时段）。",
       "iconURL": "https://raw.githubusercontent.com/${REPO}/master/AltStore/icon.png",
       "tintColor": "2E7D32",
       "size": ${IPLEN},
@@ -51,7 +51,7 @@ cat > AltStore/altstore-source.json <<JSON
         {
           "version": "${VER}",
           "date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-          "downloadURL": "https://gh-proxy.com/https://github.com/${REPO}/releases/download/${TAG}/LiveProxyConsole-${VER}.ipa",
+          "downloadURL": "https://gh-proxy.com/https://github.com/${REPO}/releases/download/${TAG}/LiveProxyTailscaleConsole-${VER}.ipa",
           "localizedDescription": "更新版本 ${VER}"
         }
       ]

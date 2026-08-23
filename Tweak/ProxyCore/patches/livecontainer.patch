@@ -69,7 +69,7 @@ diff -ruN '--exclude=.git' ../proxychains-ng/src/common.c vendor/proxychains-ng/
 +		return NULL;
 +	*slash = '\0';
 +
-+	// Only read the config file managed by LCProxyControl.
++	// Only read the config file managed by LCTailscaleControl.
 +	// This avoids interference from other proxychains.conf files on the system.
 +	const char *base = strrchr(pbuf, '/');
 +	base = base ? base + 1 : pbuf;

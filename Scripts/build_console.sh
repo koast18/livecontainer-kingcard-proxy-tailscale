@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build LiveProxyConsole.ipa (control app, WKWebView -> 127.0.0.1:19092).
+# Build LiveProxyTailscaleConsole.ipa (control app, WKWebView -> 127.0.0.1:19092).
 # No signing: LiveContainer signs on import.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -7,7 +7,7 @@ ROOT="$PWD"
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 MIN=15.0
 ARCH=arm64
-APP="build/LiveProxyConsole.app"
+APP="build/LiveProxyTailscaleConsole.app"
 
 mkdir -p build
 rm -rf "$APP"
@@ -23,7 +23,7 @@ clang -target ${ARCH}-apple-ios${MIN} -isysroot "$SDK" \
   "$ROOT/ConsoleApp/AppDelegate.m" \
   "$ROOT/ConsoleApp/ViewController.m" \
   "$ROOT/ConsoleApp/AutoUpdater.m" \
-  -o "$APP/LiveProxyConsole"
+  -o "$APP/LiveProxyTailscaleConsole"
 
 echo ">> assemble .app"
 cp "$ROOT/ConsoleApp/Info.plist" "$APP/Info.plist"
@@ -50,16 +50,16 @@ if [[ -n "${LC_PROXY_UPDATE_TAG:-}" ]]; then
   fi
 fi
 printf 'APPL????' > "$APP/PkgInfo"
-file "$APP/LiveProxyConsole"
+file "$APP/LiveProxyTailscaleConsole"
 
 echo ">> package .ipa"
 cd build
 rm -rf Payload
 mkdir -p Payload
-cp -R LiveProxyConsole.app Payload/
-rm -f LiveProxyConsole.ipa
-zip -qry LiveProxyConsole.ipa Payload
-cp LiveProxyConsole.ipa "LiveProxyConsole-${VER}.ipa"
+cp -R LiveProxyTailscaleConsole.app Payload/
+rm -f LiveProxyTailscaleConsole.ipa
+zip -qry LiveProxyTailscaleConsole.ipa Payload
+cp LiveProxyTailscaleConsole.ipa "LiveProxyTailscaleConsole-${VER}.ipa"
 cd "$ROOT"
-echo ">> done: build/LiveProxyConsole.ipa"
-ls -la build/LiveProxyConsole.ipa build/LiveProxyConsole-*.ipa
+echo ">> done: build/LiveProxyTailscaleConsole.ipa"
+ls -la build/LiveProxyTailscaleConsole.ipa build/LiveProxyTailscaleConsole-*.ipa

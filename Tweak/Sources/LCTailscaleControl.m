@@ -52,7 +52,7 @@ static void LCProxyShowBanner(NSDictionary *settings) {
 }
 
 __attribute__((constructor))
-static void LCProxyControlConstructor(void) {
+static void LCTailscaleControlConstructor(void) {
     @autoreleasepool {
         // Apply persisted settings immediately. The proxychains C core is already
         // initialized by its own constructor; these calls update runtime flags.

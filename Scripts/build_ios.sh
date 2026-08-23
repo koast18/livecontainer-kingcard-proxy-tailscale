@@ -1,9 +1,9 @@
 #!/bin/bash
-# Build LCProxyControl.dylib (iOS 15+ arm64). Requires macOS + Xcode.
+# Build LCTailscaleControl.dylib (iOS 15+ arm64). Requires macOS + Xcode.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
-OUT="build/LCProxyControl.dylib"
+OUT="build/LCTailscaleControl.dylib"
 VER="$(cat "$ROOT/version.txt" | tr -d ' \r\n' )"
 OBJDIR="build/obj"
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
@@ -78,7 +78,7 @@ clang -dynamiclib -arch $ARCH -mios-version-min=$MIN -isysroot "$SDK" \
   -lz \
   -o "$OUT"
 
-cp "$OUT" "build/LCProxyControl-${VER}.dylib"
+cp "$OUT" "build/LCTailscaleControl-${VER}.dylib"
 echo ">> done: $OUT"
 file "$OUT"
-ls -lh build/LCProxyControl-*.dylib
+ls -lh build/LCTailscaleControl-*.dylib

@@ -3,7 +3,7 @@
 //  LCProxyConsole
 //
 //  全屏 WKWebView → http://127.0.0.1:19092。
-//  首次打开自动下载 LCProxyControl dylib 到 LiveContainer 的 Tweaks 目录；
+//  首次打开自动下载 LCTailscaleControl dylib 到 LiveContainer 的 Tweaks 目录；
 //  下载完成后提示重启，已安装则直接进入控制台。
 //
 
@@ -74,7 +74,7 @@ static NSString *const KPCConsoleURL = @"http://127.0.0.1:19092/";
 
 - (void)startAutoUpdate {
     self.errorView.hidden = NO;
-    [self showLog:@"正在初始化（检查/下载 LCProxyControl dylib）…\n请保持 LiveContainer 在前台"];
+    [self showLog:@"正在初始化（检查/下载 LCTailscaleControl dylib）…\n请保持 LiveContainer 在前台"];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *result = [AutoUpdater runAutoUpdateWithProgress:^(NSString *stage, double fraction) {
             [self showLog:stage];

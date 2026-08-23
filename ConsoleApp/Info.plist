@@ -5,15 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
-	<string>LiveProxy 控制台</string>
+	<string>LiveProxy Tailscale 控制台</string>
 	<key>CFBundleExecutable</key>
-	<string>LiveProxyConsole</string>
+	<string>LiveProxyTailscaleConsole</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.liveproxy.console</string>
+	<string>com.liveproxy.tailscale.console</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>LiveProxyConsole</string>
+	<string>LiveProxyTailscaleConsole</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

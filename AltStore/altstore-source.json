@@ -1,17 +1,17 @@
 {
-  "name": "LiveProxy 源",
-  "identifier": "com.liveproxy.source",
+  "name": "LiveProxy Tailscale 源",
+  "identifier": "com.liveproxy.tailscale.source",
   "sourceURL": "https://raw.githubusercontent.com/koast18/livecontainer-kingcard-proxy-tailscale/feature/tailscale-integration/AltStore/altstore-source.json",
   "apps": [
     {
-      "name": "LiveProxy 控制台",
-      "bundleIdentifier": "com.liveproxy.console",
+      "name": "LiveProxy Tailscale 控制台",
+      "bundleIdentifier": "com.liveproxy.tailscale.console",
       "developerName": "koast18",
       "version": "0.6.0",
       "versionDate": "2026-08-23T01:52:08Z",
-      "versionDescription": "LiveProxy 控制台：LiveContainer 任意 App HTTP 代理开关、非 TCP 丢弃、10 分钟粒度蜂窝流量统计。首次打开自动下载 dylib。",
-      "downloadURL": "https://gh-proxy.com/https://github.com/koast18/livecontainer-kingcard-proxy-tailscale/releases/download/v0.6.0/LiveProxyConsole-0.6.0.ipa",
-      "localizedDescription": "LiveContainer 内任意 App 走 HTTP 代理的控制台 IPA。依赖 LCProxyControl dylib（自动下载到 LiveContainer Tweaks 目录），支持代理开关、丢弃非 TCP、蜂窝网络上传/下载流量统计（10 分钟时段）。",
+      "versionDescription": "LiveProxy Tailscale 控制台：LiveContainer 任意 App HTTP 代理开关、非 TCP 丢弃、10 分钟粒度蜂窝流量统计。首次打开自动下载 dylib。",
+      "downloadURL": "https://gh-proxy.com/https://github.com/koast18/livecontainer-kingcard-proxy-tailscale/releases/download/v0.6.0/LiveProxyTailscaleConsole-0.6.0.ipa",
+      "localizedDescription": "LiveContainer 内任意 App 走 HTTP 代理的控制台 IPA。依赖 LCTailscaleControl dylib（自动下载到 LiveContainer Tweaks 目录），支持代理开关、丢弃非 TCP、蜂窝网络上传/下载流量统计（10 分钟时段）。",
       "iconURL": "https://raw.githubusercontent.com/koast18/livecontainer-kingcard-proxy-tailscale/feature/tailscale-integration/AltStore/icon.png",
       "tintColor": "2E7D32",
       "size": 19305,
@@ -19,7 +19,7 @@
         {
           "version": "0.6.0",
           "date": "2026-08-23T01:52:08Z",
-          "downloadURL": "https://gh-proxy.com/https://github.com/koast18/livecontainer-kingcard-proxy-tailscale/releases/download/v0.6.0/LiveProxyConsole-0.6.0.ipa",
+          "downloadURL": "https://gh-proxy.com/https://github.com/koast18/livecontainer-kingcard-proxy-tailscale/releases/download/v0.6.0/LiveProxyTailscaleConsole-0.6.0.ipa",
           "localizedDescription": "更新版本 0.6.0"
         }
       ]
