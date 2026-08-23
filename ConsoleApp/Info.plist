@@ -45,6 +45,6 @@
 	<key>LCProxyUpdateRepo</key>
 	<string>koast18/livecontainer-kingcard-proxy-tailscale</string>
 	<key>LCProxyUpdateTag</key>
-	<string>v0.6.1</string>
+	<string>v0.6.2</string>
 </dict>
 </plist>
