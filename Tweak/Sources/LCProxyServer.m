@@ -84,6 +84,8 @@ static const NSUInteger LCProxyDefaultPort = 19092;
         @"running": @([[LCTailscaleManager shared] isRunning]),
         @"starting": @([[LCTailscaleManager shared] isStarting]),
         @"proxyPort": @([[LCTailscaleManager shared] localProxyPort]),
+        @"backendState": [[LCTailscaleManager shared] backendState] ?: @"",
+        @"authURL": [[LCTailscaleManager shared] authURL] ?: @"",
         @"exitNodes": [[LCTailscaleManager shared] exitNodes] ?: @[],
         @"selectedExitNodeID": [[LCTailscaleManager shared] selectedExitNodeID] ?: @"",
         @"exitNodeEnabled": @([[LCTailscaleManager shared] exitNodeEnabled]),
@@ -339,6 +341,8 @@ static const NSUInteger LCProxyDefaultPort = 19092;
         resp[@"running"] = @([[LCTailscaleManager shared] isRunning]);
         resp[@"starting"] = @([[LCTailscaleManager shared] isStarting]);
         resp[@"proxyPort"] = @([[LCTailscaleManager shared] localProxyPort]);
+        resp[@"backendState"] = [[LCTailscaleManager shared] backendState] ?: @"";
+        resp[@"authURL"] = [[LCTailscaleManager shared] authURL] ?: @"";
         resp[@"exitNodes"] = [[LCTailscaleManager shared] exitNodes] ?: @[];
         resp[@"selectedExitNodeID"] = [[LCTailscaleManager shared] selectedExitNodeID] ?: @"";
         resp[@"exitNodeEnabled"] = @([[LCTailscaleManager shared] exitNodeEnabled]);

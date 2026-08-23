@@ -21,6 +21,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isRunning;
 - (BOOL)isStarting;
 - (NSString *)lastError;
+- (NSString *)authURL;
+- (NSString *)backendState;
 
 /// Full status JSON parsed into a dictionary, or nil.
 - (NSDictionary *)status;

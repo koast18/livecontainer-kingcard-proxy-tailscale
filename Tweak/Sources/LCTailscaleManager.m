@@ -22,7 +22,10 @@
 @property (nonatomic, copy) NSString *lastSelectedExitNodeID;
 @property (nonatomic, assign) BOOL lastExitNodeEnabled;
 @property (nonatomic, assign) int generation;
+@property (nonatomic, copy) NSString *authURL;
+@property (nonatomic, copy) NSString *backendState;
 - (void)startWithSettings:(NSDictionary *)settings;
+- (NSDictionary *)statusForSD:(int)sd;
 - (void)stop;
 - (NSString *)settingsSignature:(NSDictionary *)settings;
 @end
@@ -164,13 +167,56 @@
             tailscale_close(sd);
             return;
         }
-        if (tailscale_up(sd) != 0) {
+        // Start without blocking: this lets us expose the interactive login
+        // URL when no auth key is configured. We then poll until Running.
+        if (tailscale_start(sd) != 0) {
             char err[1024] = {0};
             tailscale_errmsg(sd, err, sizeof(err));
             [self finishStart:-1 error:[NSString stringWithUTF8String:err]];
             tailscale_close(sd);
             return;
         }
+
+        // Poll BackendState/AuthURL until the node is Running or stopped.
+        NSString *lastState = @"";
+        for (int i = 0; i < 300; i++) {
+            [self.lock lock];
+            BOOL genOK = (self.generation == generation);
+            [self.lock unlock];
+            if (!genOK) {
+                tailscale_close(sd);
+                return;
+            }
+
+            NSDictionary *st = [self statusForSD:sd];
+            NSString *state = [st[@"BackendState"] isKindOfClass:[NSString class]] ? st[@"BackendState"] : @"";
+            lastState = state;
+            NSString *auth = [st[@"AuthURL"] isKindOfClass:[NSString class]] ? st[@"AuthURL"] : @"";
+            [self.lock lock];
+            self.backendState = state;
+            self.authURL = auth;
+            [self.lock unlock];
+
+            if ([state isEqualToString:@"Running"]) {
+                break;
+            }
+            [NSThread sleepForTimeInterval:1.0];
+        }
+
+        if (![lastState isEqualToString:@"Running"]) {
+            [self finishStart:-1 error:@"等待 Tailscale 登录超时，请检查 AuthURL 并重新登录"];
+            tailscale_close(sd);
+            return;
+        }
+
+        [self.lock lock];
+        BOOL genOK2 = (self.generation == generation);
+        [self.lock unlock];
+        if (!genOK2) {
+            tailscale_close(sd);
+            return;
+        }
+
         char addr[128] = {0};
         char pcred[33] = {0};
         char lcred[33] = {0};
@@ -232,6 +278,8 @@
     self.proxyPassword = nil;
     self.lastStatus = nil;
     self.lastExitNodes = nil;
+    self.authURL = nil;
+    self.backendState = nil;
     self.generation++;
     [self.lock unlock];
     if (sd >= 0) {
@@ -279,6 +327,29 @@
     [self refreshStatus];
     [self.lock lock];
     NSDictionary *v = self.lastStatus;
+    [self.lock unlock];
+    return v;
+}
+
+- (NSDictionary *)statusForSD:(int)sd {
+    if (sd < 0) return nil;
+    char buf[1024 * 1024];
+    if (tailscale_get_status_json(sd, buf, sizeof(buf)) != 0) return nil;
+    NSData *data = [NSData dataWithBytes:buf length:strlen(buf)];
+    NSDictionary *status = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    return [status isKindOfClass:[NSDictionary class]] ? status : nil;
+}
+
+- (NSString *)authURL {
+    [self.lock lock];
+    NSString *v = self.authURL ?: @"";
+    [self.lock unlock];
+    return v;
+}
+
+- (NSString *)backendState {
+    [self.lock lock];
+    NSString *v = self.backendState ?: @"";
     [self.lock unlock];
     return v;
 }

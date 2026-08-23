@@ -131,8 +131,14 @@ select { background:#0d1117; border:1px solid #30363d; color:#e6edf3; border-rad
     <div class="card">
       <h2>Tailscale 控制</h2>
       <div class="row"><span class="k">运行状态</span><span class="v" id="tsRunning">…</span></div>
+      <div class="row"><span class="k">后端状态</span><span class="v" id="tsBackendState">…</span></div>
       <div class="row"><span class="k">本地 SOCKS5 端口</span><span class="v" id="tsPort">…</span></div>
       <div class="row"><span class="k">上次错误</span><span class="v" id="tsError">…</span></div>
+      <div class="row" style="display:block;margin-top:6px">
+        <span class="k">登录链接（AuthURL）</span>
+        <div id="tsAuthURL" style="word-break:break-all;font-size:12px;color:#58a6ff;margin-top:4px">—</div>
+        <button class="secondary" id="copyAuthURL" style="margin-top:6px">复制登录链接</button>
+      </div>
       <div class="row" style="display:block;margin-top:10px">
         <label class="k">节点名称（Hostname）</label>
         <input type="text" id="tailscaleHostname" placeholder="lc-tailscale">
@@ -238,8 +244,16 @@ async function loadStatus() {
   const ts = s.tailscale || {};
   $('kingRunning').textContent = king.running ? '运行中' : '未运行';
   $('tsRunning').textContent = ts.starting ? '启动中…' : (ts.running ? '运行中' : '未运行');
+  $('tsBackendState').textContent = ts.backendState || '—';
   $('tsPort').textContent = ts.proxyPort ? String(ts.proxyPort) : '—';
   $('tsError').textContent = ts.lastError || '—';
+  const authEl = $('tsAuthURL');
+  if (ts.authURL) {
+    authEl.textContent = ts.authURL;
+    authEl.style.color = '#58a6ff';
+  } else {
+    authEl.textContent = '—';
+  }
   $('kingRefresh').textContent = king.lastRefresh || '—';
   $('kingSource').textContent = king.lastSource || '—';
   const fwStats = s.kingAggregate || {};
@@ -314,7 +328,15 @@ async function loadTailscale() {
   const r = await api('/api/tailscale/status');
   if (r.error) return;
   $('tsRunning').textContent = r.starting ? '启动中…' : (r.running ? '运行中' : '未运行');
+  $('tsBackendState').textContent = r.backendState || '—';
   $('tsPort').textContent = r.proxyPort ? String(r.proxyPort) : '—';
+  const authEl = $('tsAuthURL');
+  if (r.authURL) {
+    authEl.textContent = r.authURL;
+    authEl.style.color = '#58a6ff';
+  } else {
+    authEl.textContent = '—';
+  }
   renderExitNodes(r.exitNodes || [], r.selectedExitNodeID || '');
   $('tailscaleExitNodeEnabled').checked = !!r.exitNodeEnabled;
 }
@@ -430,6 +452,15 @@ $('testProxyBtn').onclick = async () => {
     $('proxyTestMsg').textContent = '出口 IP: '+found.ip+'（'+found.source+'，共测试 '+sources.length+' 个源）';
   } else {
     $('proxyTestMsg').textContent = '所有 IP 源均失败，请检查代理/转发器';
+  }
+};
+$('copyAuthURL').onclick = () => {
+  const url = $('tsAuthURL').textContent;
+  if (!url || url === '—') return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(() => { $('tsCfgMsg').textContent = '登录链接已复制'; });
+  } else {
+    $('tsCfgMsg').textContent = '请手动复制: ' + url;
   }
 };
 $('saveTailscale').onclick = async () => {
