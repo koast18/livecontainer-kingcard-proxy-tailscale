@@ -87,7 +87,7 @@ GitHub Actions 会自动在 push/PR 时运行 CI，包含：
 在 AltStore/SideStore 中添加：
 
 ```
-https://raw.githubusercontent.com/koast18/livecontainer-kingcard-proxy/master/AltStore/altstore-source.json
+https://raw.githubusercontent.com/koast18/livecontainer-kingcard-proxy-tailscale/feature/tailscale-integration/AltStore/altstore-source.json
 ```
 
 该地址固定不变；更新版本时只需更新仓库中的 `AltStore/altstore-source.json` 并打新 tag，Actions 会自动构建并发布 Release 资产。
@@ -104,6 +104,23 @@ https://raw.githubusercontent.com/koast18/livecontainer-kingcard-proxy/master/Al
 ## License
 
 GPLv2（proxychains-ng 与派生代码），GCDWebServer 为 Apache-2.0。
+
+## 关于 Tailscale 与王卡代理的关系
+
+当前版本中，只要在「代理」页选择 **Tailscale** 模式：
+
+- 一定会启动本进程内的王卡本地转发器；
+- 一定会把嵌入式 Tailscale 的 control plane 和 DERP 外连 HTTP 代理设置为该王卡转发器；
+- 一定会强制关闭 P2P 直连和 UDP 打洞。
+
+所以 **Tailscale 模式隐含“Tailscale 只通过王卡代理连接 DERP”**，这不是可选开关。
+也就是说：
+
+```text
+用户 App -> Tailscale SOCKS5 -> Tailscale 网络 -> DERP -> 王卡代理 -> 公网
+```
+
+如果以后需要“Tailscale 走自定义代理而不是王卡”，需要额外增加一个“Tailscale 底层代理来源”选项；当前版本没有做这个选项。
 
 ## Tailscale 集成（实验性）
 
