@@ -105,6 +105,30 @@ https://raw.githubusercontent.com/koast18/livecontainer-kingcard-proxy-tailscale
 
 GPLv2（proxychains-ng 与派生代码），GCDWebServer 为 Apache-2.0。
 
+## Tailscale 登录方式
+
+- 如果 `tailscaleAuthKey` 留空，则使用 **交互式登录**：
+  - Tailscale 启动后会进入 `NeedsLogin` 状态；
+  - 控制台 Tailscale 页会显示 `AuthURL` 登录链接；
+  - 点击“复制登录链接”后，在浏览器中打开并授权；
+  - 授权完成后节点自动进入 `Running` 状态并开启本地 SOCKS5 代理。
+- 如果填写了 `tailscaleAuthKey`，则优先使用 AuthKey 自动登录，不显示交互链接。
+
+## 默认设置
+
+| 设置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `tailscaleHostname` | `lc-tailscale` | 节点名称 |
+| `tailscaleAuthKey` | 空 | 空 = 交互式登录链接 |
+| `tailscaleControlURL` | 空 | 空 = 官方控制平面 |
+| `tailscaleStateDir` | 空 | 空 = `<数据目录>/tailscale` |
+| `tailscaleEphemeral` | `YES` | 临时节点，避免多进程状态冲突 |
+| `tailscaleForceDerpOnly` | `YES` | 固定强制 DERP-only |
+| `tailscaleExitNodeID` | 空 | 默认不选择 Exit Node |
+| `tailscaleExitNodeEnabled` | `NO` | 默认关闭 Exit Node |
+
+如果你希望某些默认值不同，请告诉我具体项，我再调整。
+
 ## 关于 Tailscale 与王卡代理的关系
 
 当前版本中，只要在「代理」页选择 **Tailscale** 模式：
