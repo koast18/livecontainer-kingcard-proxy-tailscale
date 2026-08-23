@@ -39,3 +39,21 @@ jobs:
         run: |
           set -euo pipefail
           ./Scripts/build_ios.sh
+
+      - name: Verify Tailscale control artifacts
+        run: |
+          set -euo pipefail
+          VER="$(cat version.txt | tr -d ' 
+')"
+          test -f "build/LCTailscaleControl-${VER}.dylib"
+          test -f "build/LiveProxyTailscaleConsole-${VER}.ipa"
+          nm -gU "build/LCTailscaleControl-${VER}.dylib" | grep -E ' _tailscale_(new|set_proxy|set_disable_p2p|get_full_status_json|set_exit_node)$'
+          unzip -p "build/LiveProxyTailscaleConsole-${VER}.ipa" Payload/LiveProxyTailscaleConsole.app/Info.plist | grep -q 'com.liveproxy.tailscale.console'
+          unzip -p "build/LiveProxyTailscaleConsole-${VER}.ipa" Payload/LiveProxyTailscaleConsole.app/Info.plist | grep -q 'koast18/livecontainer-kingcard-proxy-tailscale'
+
+      - name: Tailscale macOS live smoke test
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          set -euo pipefail
+          bash Scripts/test_tailscale_macos.sh
