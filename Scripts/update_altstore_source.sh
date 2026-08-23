@@ -7,6 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO="${1:-koast18/livecontainer-kingcard-proxy}"
+BRANCH="${3:-master}"
 VER="$(cat version.txt | tr -d ' \r\n')"
 TAG="v${VER}"
 IPA="build/LiveProxyTailscaleConsole-${VER}.ipa"
