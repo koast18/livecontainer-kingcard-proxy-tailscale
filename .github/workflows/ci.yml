@@ -51,7 +51,14 @@ jobs:
           unzip -p "build/LiveProxyTailscaleConsole-${VER}.ipa" Payload/LiveProxyTailscaleConsole.app/Info.plist | grep -q 'com.liveproxy.tailscale.console'
           unzip -p "build/LiveProxyTailscaleConsole-${VER}.ipa" Payload/LiveProxyTailscaleConsole.app/Info.plist | grep -q 'koast18/livecontainer-kingcard-proxy-tailscale'
 
-      - name: Tailscale macOS live smoke test
+      - name: Tailscale macOS ABI smoke test
+        run: |
+          set -euo pipefail
+          bash Scripts/test_tailscale_macos.sh
+
+      # Opt in only after TAILSCALE_AUTH_KEY is verified for this repository.
+      - name: Tailscale macOS authenticated smoke test
+        if: vars.TAILSCALE_LIVE_SMOKE == 'true'
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |

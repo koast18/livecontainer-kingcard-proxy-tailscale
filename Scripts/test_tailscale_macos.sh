@@ -1,6 +1,6 @@
 #!/bin/bash
-# Live Tailscale smoke test on macOS using the prebuilt tailscale-ios-dylib
-# macOS dylib. Requires TAILSCALE_AUTH_KEY (GitHub secret) to actually log in.
+# macOS ABI smoke test using the prebuilt tailscale-ios-dylib macOS dylib.
+# It becomes an authenticated live smoke test only when TAILSCALE_AUTH_KEY is set.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
