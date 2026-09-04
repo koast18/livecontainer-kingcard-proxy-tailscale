@@ -94,7 +94,9 @@ void kp_dbg(const char *fmt, ...) {
         for (int i = 1; i < 8; i++) memcpy(g_kp_dbg_recent[i - 1], g_kp_dbg_recent[i], 512);
         g_kp_dbg_recent_n = 8;
     }
-    snprintf(g_kp_dbg_recent[idx], 512, "%s", line);
+    size_t recent_len = strnlen(line, sizeof(g_kp_dbg_recent[idx]) - 1);
+    memcpy(g_kp_dbg_recent[idx], line, recent_len);
+    g_kp_dbg_recent[idx][recent_len] = '\0';
     pthread_mutex_unlock(&g_kp_dbg_lock);
 }
 
@@ -109,6 +111,19 @@ void kp_dbg(const char *fmt, ...) {
 #else
 #error "KPKIngCore supports POSIX only"
 #endif
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
+static void kp_disable_sigpipe(int fd) {
+#ifdef SO_NOSIGPIPE
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#else
+    (void)fd;
+#endif
+}
 
 // ---------- 小工具 ----------
 
@@ -463,6 +478,7 @@ static int kp_connect_host(const char *host, int port, int timeout_ms) {
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (fd < 0) continue;
+        kp_disable_sigpipe(fd);
         if (timeout_ms > 0) {
             struct timeval tv = { timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
             setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -481,7 +497,7 @@ static int kp_connect_host(const char *host, int port, int timeout_ms) {
 static int kp_send_all(int fd, const char *buf, size_t len) {
     size_t off = 0;
     while (off < len) {
-        ssize_t w = send(fd, buf + off, len - off, 0);
+        ssize_t w = send(fd, buf + off, len - off, MSG_NOSIGNAL);
         if (w <= 0) return -1;
         off += (size_t)w;
     }
@@ -501,6 +517,16 @@ static int kp_recv_until(int fd, char *buf, size_t cap, size_t *got, int timeout
     buf[off] = '\0';
     *got = off;
     return off > 0 ? 0 : -1;
+}
+
+static int kp_recv_exact(int fd, unsigned char *buf, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+        ssize_t r = recv(fd, buf + off, len - off, 0);
+        if (r <= 0) return -1;
+        off += (size_t)r;
+    }
+    return 0;
 }
 
 // 读完整响应（含 body，直到连接关闭或 Content-Length 满足）
@@ -560,6 +586,7 @@ static int kp_do_fetch(int fd, const char *host, const char *path,
                        char *guid, size_t guid_cap, char *token, size_t token_cap,
                        int timeout_ms, kp_fetch_diag *diag,
                        int *status_out) {
+    (void)timeout_ms;
     char req[512];
     snprintf(req, sizeof(req),
              "GET %s HTTP/1.0\r\n"
@@ -641,11 +668,20 @@ static int kp_fetch_with_redirects(int (*open_conn)(const char *host, int port, 
             return -1;
         }
         if (strncmp(d.location, "http://", 7) == 0) {
-            snprintf(url, sizeof(url), "%s", d.location);
+            if (kp_snprintf_checked(url, sizeof(url), "%s", d.location) != 0) {
+                if (diag) *diag = d;
+                return -1;
+            }
         } else if (d.location[0] == '/') {
-            snprintf(url, sizeof(url), "http://%s%s", host, d.location);
+            if (kp_snprintf_checked(url, sizeof(url), "http://%s%s", host, d.location) != 0) {
+                if (diag) *diag = d;
+                return -1;
+            }
         } else {
-            snprintf(url, sizeof(url), "http://%s/%.200s", host, d.location);
+            if (kp_snprintf_checked(url, sizeof(url), "http://%s/%.200s", host, d.location) != 0) {
+                if (diag) *diag = d;
+                return -1;
+            }
         }
         if (diag) *diag = d;
     }
@@ -726,17 +762,20 @@ int kp_http_get_via_proxy(const char *upstream_host, int upstream_port,
     char cur_host[256];
     int cur_port = target_port;
     char cur_path[512];
-    snprintf(cur_host, sizeof(cur_host), "%s", target_host);
-    snprintf(cur_path, sizeof(cur_path), "%s", path ? path : "/");
+    if (kp_snprintf_checked(cur_host, sizeof(cur_host), "%s", target_host) != 0 ||
+        kp_snprintf_checked(cur_path, sizeof(cur_path), "%s", path ? path : "/") != 0) return -1;
 
     for (int hop = 0; hop < 4; hop++) {
         struct proxy_ctx ctx = { upstream_host, upstream_port, guid, token };
         int fd = kp_open_via_proxy(cur_host, cur_port, timeout_ms, &ctx);
         if (fd < 0) return -1;
-        char req[512];
-        snprintf(req, sizeof(req),
-                 "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: " KPTWEAK_UA "\r\nAccept: text/plain\r\nConnection: close\r\n\r\n",
-                 cur_path, cur_host);
+        char req[1024];
+        if (kp_snprintf_checked(req, sizeof(req),
+                                "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: " KPTWEAK_UA "\r\nAccept: text/plain\r\nConnection: close\r\n\r\n",
+                                cur_path, cur_host) != 0) {
+            KP_CLOSESOCK(fd);
+            return -1;
+        }
         int rc = -1;
         if (kp_send_all(fd, req, strlen(req)) == 0) {
             char buf[4096];
@@ -764,9 +803,12 @@ int kp_http_get_via_proxy(const char *upstream_host, int upstream_port,
                         int rport = 80;
                         const char *rpath = NULL;
                         if (kp_parse_url(loc, rhost, sizeof(rhost), &rport, &rpath) == 0) {
-                            snprintf(cur_host, sizeof(cur_host), "%s", rhost);
+                            if (kp_snprintf_checked(cur_host, sizeof(cur_host), "%s", rhost) != 0 ||
+                                kp_snprintf_checked(cur_path, sizeof(cur_path), "%s", rpath ? rpath : "/") != 0) {
+                                KP_CLOSESOCK(fd);
+                                return -1;
+                            }
                             cur_port = rport;
-                            snprintf(cur_path, sizeof(cur_path), "%s", rpath ? rpath : "/");
                             KP_CLOSESOCK(fd);
                             continue;
                         }
@@ -782,6 +824,79 @@ int kp_http_get_via_proxy(const char *upstream_host, int upstream_port,
     return -1;
 }
 
+int kp_http_get_via_socks5(const char *proxy_host, int proxy_port,
+                           const char *username, const char *password,
+                           const char *target_host, int target_port, const char *path,
+                           int timeout_ms, char *out, size_t out_cap) {
+    if (!proxy_host || !username || !password || !target_host ||
+        proxy_port <= 0 || proxy_port > 65535 || target_port <= 0 || target_port > 65535 ||
+        strlen(username) > 255 || strlen(password) > 255 || strlen(target_host) > 255) return -1;
+    if (out && out_cap > 0) out[0] = '\0';
+
+    int fd = kp_connect_host(proxy_host, proxy_port, timeout_ms);
+    if (fd < 0) return -1;
+    int rc = -1;
+    const unsigned char greeting[] = { 0x05, 0x02, 0x00, 0x02 };
+    unsigned char reply[4];
+    if (kp_send_all(fd, (const char *)greeting, sizeof(greeting)) != 0 ||
+        kp_recv_exact(fd, reply, 2) != 0 || reply[0] != 0x05 || reply[1] != 0x02) goto done;
+
+    unsigned char auth[513];
+    size_t user_len = strlen(username), pass_len = strlen(password);
+    auth[0] = 0x01;
+    auth[1] = (unsigned char)user_len;
+    memcpy(auth + 2, username, user_len);
+    auth[2 + user_len] = (unsigned char)pass_len;
+    memcpy(auth + 3 + user_len, password, pass_len);
+    if (kp_send_all(fd, (const char *)auth, 3 + user_len + pass_len) != 0 ||
+        kp_recv_exact(fd, reply, 2) != 0 || reply[0] != 0x01 || reply[1] != 0x00) goto done;
+
+    unsigned char connect_request[262];
+    size_t host_len = strlen(target_host);
+    connect_request[0] = 0x05;
+    connect_request[1] = 0x01;
+    connect_request[2] = 0x00;
+    connect_request[3] = 0x03;
+    connect_request[4] = (unsigned char)host_len;
+    memcpy(connect_request + 5, target_host, host_len);
+    connect_request[5 + host_len] = (unsigned char)(target_port >> 8);
+    connect_request[6 + host_len] = (unsigned char)target_port;
+    if (kp_send_all(fd, (const char *)connect_request, 7 + host_len) != 0 ||
+        kp_recv_exact(fd, reply, sizeof(reply)) != 0 || reply[0] != 0x05 || reply[1] != 0x00) goto done;
+    size_t address_len = reply[3] == 0x01 ? 4 : reply[3] == 0x04 ? 16 : reply[3] == 0x03 ? 0 : SIZE_MAX;
+    if (address_len == SIZE_MAX) goto done;
+    if (reply[3] == 0x03) {
+        if (kp_recv_exact(fd, reply, 1) != 0) goto done;
+        address_len = reply[0];
+    }
+    unsigned char discard[257];
+    if (kp_recv_exact(fd, discard, address_len + 2) != 0) goto done;
+
+    char request[768];
+    if (kp_snprintf_checked(request, sizeof(request),
+                            "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: " KPTWEAK_UA "\r\nAccept: text/plain\r\nConnection: close\r\n\r\n",
+                            path && path[0] ? path : "/", target_host) != 0 ||
+        kp_send_all(fd, request, strlen(request)) != 0) goto done;
+    char response[4096];
+    size_t response_len = 0;
+    if (kp_recv_response(fd, response, sizeof(response), &response_len) != 0 ||
+        kp_parse_status_code(response, response_len) < 200 || kp_parse_status_code(response, response_len) >= 300) goto done;
+    char body[2048];
+    size_t body_len = 0;
+    kp_fetch_diag diag;
+    kp_fetch_diag_init(&diag);
+    if (kp_parse_http_response(response, response_len, body, sizeof(body), &body_len, &diag) != 0) goto done;
+    if (out && out_cap > 0) {
+        size_t copy_len = body_len < out_cap - 1 ? body_len : out_cap - 1;
+        memcpy(out, body, copy_len);
+        out[copy_len] = '\0';
+    }
+    rc = 0;
+done:
+    KP_CLOSESOCK(fd);
+    return rc;
+}
+
 int kp_http_get_direct(const char *target_host, int target_port, const char *path,
                        int timeout_ms, char *out, size_t out_cap) {
     kp_dbg("[ipcheck/direct] 入口: 目标=%s:%d%s", target_host ? target_host : "(null)", target_port, path ? path : "");
@@ -791,16 +906,19 @@ int kp_http_get_direct(const char *target_host, int target_port, const char *pat
     char cur_host[256];
     int cur_port = target_port;
     char cur_path[512];
-    snprintf(cur_host, sizeof(cur_host), "%s", target_host);
-    snprintf(cur_path, sizeof(cur_path), "%s", path ? path : "/");
+    if (kp_snprintf_checked(cur_host, sizeof(cur_host), "%s", target_host) != 0 ||
+        kp_snprintf_checked(cur_path, sizeof(cur_path), "%s", path ? path : "/") != 0) return -1;
 
     for (int hop = 0; hop < 4; hop++) {
         int fd = kp_connect_host(cur_host, cur_port, timeout_ms);
         if (fd < 0) return -1;
-        char req[512];
-        snprintf(req, sizeof(req),
-                 "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: " KPTWEAK_UA "\r\nAccept: text/plain\r\nConnection: close\r\n\r\n",
-                 cur_path, cur_host);
+        char req[1024];
+        if (kp_snprintf_checked(req, sizeof(req),
+                                "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: " KPTWEAK_UA "\r\nAccept: text/plain\r\nConnection: close\r\n\r\n",
+                                cur_path, cur_host) != 0) {
+            KP_CLOSESOCK(fd);
+            return -1;
+        }
         int rc = -1;
         if (kp_send_all(fd, req, strlen(req)) == 0) {
             char buf[4096];
@@ -1093,12 +1211,19 @@ struct kp_forwarder {
     int direct_host_log_count;
     int direct_host_log_rr;
 
+    // Covers lifecycle, counters, and diagnostic data read by console threads.
+    pthread_mutex_t state_lock;
+    // Serializes start/stop so an old accept thread cannot observe a new listener.
+    pthread_mutex_t lifecycle_lock;
+    int destroying;
+
     kp_refresh_fn refresh_fn;
     void *refresh_ctx;
 
     int listen_fd;
     int running;
     pthread_t thread;
+    int accept_thread_started;
     // 活跃客户端/转发线程计数：防止高速下载并发连接风暴瞬间创建过量线程，
     // 耗尽系统线程/栈内存导致整个 App 闪退。达到上限时拒绝新连接（503）。
     // client_fds 记录当前活跃连接，kp_forwarder_stop 会 shutdown 它们让阻塞的
@@ -1110,18 +1235,25 @@ struct kp_forwarder {
     int client_fd_count;
 };
 
+#define KP_STAT_INC(fw, field) do { \
+    pthread_mutex_lock(&(fw)->state_lock); \
+    (fw)->field++; \
+    pthread_mutex_unlock(&(fw)->state_lock); \
+} while (0)
+
 struct client_arg {
     kp_forwarder *fw;
     int fd;
 };
 
-static void kp_forwarder_creds(kp_forwarder *fw, char *guid, size_t gc, char *token, size_t tc);
 static void kp_forwarder_record_direct_host(kp_forwarder *fw, const char *host) {
     if (!fw || !host || host[0] == '\0') return;
+    pthread_mutex_lock(&fw->state_lock);
     int idx = fw->direct_host_log_rr % KP_DIRECT_HOST_LOG_MAX;
     fw->direct_host_log_rr++;
     snprintf(fw->direct_host_log[idx], sizeof(fw->direct_host_log[idx]), "%s", host);
     if (fw->direct_host_log_count < KP_DIRECT_HOST_LOG_MAX) fw->direct_host_log_count++;
+    pthread_mutex_unlock(&fw->state_lock);
 }
 
 static void kp_forwarder_snapshot(kp_forwarder *fw,
@@ -1203,7 +1335,8 @@ int kp_rebuild_proxy_request(const char *reqbuf, size_t reqlen,
     const char *eol1 = strchr(reqbuf, '\r');
     if (eol1 && eol1[1] == '\n') {
         const char *h = eol1 + 2;
-        const char *hend = sep ? sep : reqbuf + reqlen;
+        // Include the final header line terminator, then append one empty line below.
+        const char *hend = sep ? sep + 2 : reqbuf + reqlen;
         const char *line = h;
         while (line < hend) {
             const char *le = strstr(line, "\r\n");
@@ -1213,7 +1346,7 @@ int kp_rebuild_proxy_request(const char *reqbuf, size_t reqlen,
                 line = le2;
                 continue;
             }
-            if ((size_t)n + ll + 2 >= out_cap) break;
+            if ((size_t)n + ll + 2 >= out_cap) return -1;
             memcpy(out + n, line, ll);
             n += (int)ll;
             line = le2;
@@ -1370,15 +1503,19 @@ static void kp_millis_string(char *out, size_t out_cap) {
     snprintf(out, out_cap, "%lld", ms);
 }
 
-static void kp_build_http_url(const char *host, int port, const char *path,
-                              char *url, size_t url_cap) {
-    if (port == 80) snprintf(url, url_cap, "http://%s%s", host, path ? path : "/");
-    else snprintf(url, url_cap, "http://%s:%d%s", host, port, path ? path : "/");
+static int kp_build_http_url(const char *host, int port, const char *path,
+                             char *url, size_t url_cap) {
+    if (!host || !url || port <= 0 || port > 65535) return -1;
+    return port == 80
+        ? kp_snprintf_checked(url, url_cap, "http://%s%s", host, path ? path : "/")
+        : kp_snprintf_checked(url, url_cap, "http://%s:%d%s", host, port, path ? path : "/");
 }
 
-static void kp_build_https_url(const char *host, int port, char *url, size_t url_cap) {
-    if (port == 443) snprintf(url, url_cap, "https://%s/", host);
-    else snprintf(url, url_cap, "https://%s:%d/", host, port);
+static int kp_build_https_url(const char *host, int port, char *url, size_t url_cap) {
+    if (!host || !url || port <= 0 || port > 65535) return -1;
+    return port == 443
+        ? kp_snprintf_checked(url, url_cap, "https://%s/", host)
+        : kp_snprintf_checked(url, url_cap, "https://%s:%d/", host, port);
 }
 
 static size_t kp_append_origin_headers(const char *reqbuf, size_t reqlen,
@@ -1406,7 +1543,7 @@ static size_t kp_append_origin_headers(const char *reqbuf, size_t reqlen,
         else if (ll >= 17 && strncasecmp(h, "Proxy-Connection:", 17) == 0) skip = 1;
         else if (ll >= 19 && strncasecmp(h, "Proxy-Authorization:", 19) == 0) skip = 1;
         if (!skip) {
-            if (off + ll + 2 >= out_cap) break;
+            if (off + ll + 2 >= out_cap) return SIZE_MAX;
             memcpy(out + off, h, ll);
             off += ll;
             out[off++] = '\r';
@@ -1430,7 +1567,7 @@ static int kp_build_queen_http_request(kp_forwarder *fw,
     if (token[0] == '\0' || qkey[0] == '\0') return -1;
 
     char url[1024];
-    kp_build_http_url(host, port, path, url, sizeof(url));
+    if (kp_build_http_url(host, port, path, url, sizeof(url)) != 0) return -1;
     char reqid[24];
     kp_millis_string(reqid, sizeof(reqid));
     if (kpk_build_qkey_header(guid, host, url, reqid, qkey, qkey_out, qkey_out_cap) != 0) return -1;
@@ -1452,7 +1589,7 @@ static int kp_build_queen_http_request(kp_forwarder *fw,
     if (n <= 0 || (size_t)n >= out_cap) return -1;
     size_t off = (size_t)n;
     off = kp_append_origin_headers(reqbuf, reqlen, out, out_cap, off);
-    if (off + 2 >= out_cap) return -1;
+    if (off == SIZE_MAX || off + 2 >= out_cap) return -1;
     out[off++] = '\r';
     out[off++] = '\n';
 
@@ -1480,7 +1617,7 @@ static int kp_build_queen_connect_request(kp_forwarder *fw,
     if (token[0] == '\0' || qkey[0] == '\0') return -1;
 
     char url[1024];
-    kp_build_https_url(host, port, url, sizeof(url));
+    if (kp_build_https_url(host, port, url, sizeof(url)) != 0) return -1;
     char reqid[24];
     kp_millis_string(reqid, sizeof(reqid));
     if (kpk_build_qkey_header(guid, host, url, reqid, qkey, qkey_out, qkey_out_cap) != 0) return -1;
@@ -1572,6 +1709,53 @@ static size_t kp_reader_copy(kp_reader *r, char *out, size_t len) {
     return got;
 }
 
+// Returns 0 for no body, 1 for a validated Content-Length, 2 for a transfer
+// encoding we intentionally do not stream, and -1 for ambiguous/malformed framing.
+static int kp_request_body_framing(const char *headers, size_t header_len, size_t *content_length) {
+    if (!headers || !content_length || header_len < 4) return -1;
+    *content_length = 0;
+    int has_content_length = 0;
+    int has_transfer_encoding = 0;
+    const char *line = strstr(headers, "\r\n");
+    const char *end = headers + header_len - 2;
+    if (!line || line + 2 > end) return -1;
+    line += 2;
+
+    while (line < end) {
+        const char *next = strstr(line, "\r\n");
+        if (!next || next > end) return -1;
+        if (next == line) break;
+        const char *colon = memchr(line, ':', (size_t)(next - line));
+        if (!colon) return -1;
+        const char *value = colon + 1;
+        while (value < next && isspace((unsigned char)*value)) value++;
+        const char *value_end = next;
+        while (value_end > value && isspace((unsigned char)value_end[-1])) value_end--;
+
+        if ((size_t)(colon - line) == 14 && strncasecmp(line, "Content-Length", 14) == 0) {
+            if (value == value_end || value_end - value >= 32) return -1;
+            char number[32];
+            size_t number_len = (size_t)(value_end - value);
+            memcpy(number, value, number_len);
+            number[number_len] = '\0';
+            errno = 0;
+            char *parsed_end = NULL;
+            unsigned long long parsed = strtoull(number, &parsed_end, 10);
+            if (errno == ERANGE || parsed_end == number || *parsed_end != '\0' ||
+                parsed > SIZE_MAX || (has_content_length && *content_length != (size_t)parsed)) return -1;
+            *content_length = (size_t)parsed;
+            has_content_length = 1;
+        } else if ((size_t)(colon - line) == 17 && strncasecmp(line, "Transfer-Encoding", 17) == 0) {
+            if (value == value_end) return -1;
+            has_transfer_encoding = 1;
+        }
+        line = next + 2;
+    }
+    if (has_transfer_encoding && has_content_length) return -1;
+    if (has_transfer_encoding) return 2;
+    return has_content_length ? 1 : 0;
+}
+
 // 把 reader 中已缓冲的剩余字节（例如 CONNECT 头之后提前到达的 TLS 数据）发给 fd。
 static int kp_reader_send_available(kp_reader *r, int fd, uint64_t *counter) {
     size_t avail = r->end - r->start;
@@ -1594,19 +1778,32 @@ static void kp_handle_client(kp_forwarder *fw, int client) {
         return;
     }
     size_t off = header_len;
+    reqbuf[header_len] = '\0';
 
-    // Content-Length body：从 reader 缓冲/套接字补齐到 reqbuf，避免逐字节 recv。
-    {
-        char *cl = strstr(reqbuf, "Content-Length:");
-        if (!cl) cl = strstr(reqbuf, "content-length:");
-        if (cl) {
-            int clen = atoi(cl + 15);
-            if (clen > 0 && off + (size_t)clen < sizeof(reqbuf)) {
-                size_t got = kp_reader_copy(&reader, reqbuf + off, (size_t)clen);
-                off += got;
-            }
-        }
+    size_t content_length = 0;
+    int framing = kp_request_body_framing(reqbuf, header_len, &content_length);
+    if (framing < 0) {
+        kp_send_simple_response(client, 400, "Bad Request");
+        KP_CLOSESOCK(client);
+        return;
     }
+    if (framing == 2) {
+        // Sending a partial chunked body upstream corrupts the next request; reject it.
+        kp_send_simple_response(client, 501, "Transfer Encoding Not Supported");
+        KP_CLOSESOCK(client);
+        return;
+    }
+    if (content_length > sizeof(reqbuf) - off - 1) {
+        kp_send_simple_response(client, 413, "Payload Too Large");
+        KP_CLOSESOCK(client);
+        return;
+    }
+    if (content_length > 0 && kp_reader_copy(&reader, reqbuf + off, content_length) != content_length) {
+        kp_send_simple_response(client, 400, "Incomplete Request Body");
+        KP_CLOSESOCK(client);
+        return;
+    }
+    off += content_length;
     reqbuf[off] = '\0';
 
     char method[16];
@@ -1616,7 +1813,7 @@ static void kp_handle_client(kp_forwarder *fw, int client) {
 
     if (kp_parse_absolute_uri(reqbuf, off, method, sizeof(method),
                               host, sizeof(host), &port, path, sizeof(path)) == 0) {
-        fw->stat_http_requests++;
+        KP_STAT_INC(fw, stat_http_requests);
         kp_dbg("[fw] HTTP absolute URI: %s http://%s:%d%s", method, host, port, path);
 
         if (strncmp(host, "127.", 4) == 0 || strcmp(host, "localhost") == 0 ||
@@ -1681,7 +1878,7 @@ static void kp_handle_client(kp_forwarder *fw, int client) {
             }
             if (code == 822 || code == 824) {
                 KP_CLOSESOCK(up);
-                fw->stat_direct_fallbacks++;
+                KP_STAT_INC(fw, stat_direct_fallbacks);
                 kp_forwarder_record_direct_host(fw, host);
                 char rebuilt[4096];
                 int rn = kp_rebuild_proxy_request(reqbuf, off, method, host, port, path,
@@ -1739,7 +1936,7 @@ static void kp_handle_client(kp_forwarder *fw, int client) {
         KP_CLOSESOCK(client);
         return;
     }
-    fw->stat_https_connects++;
+    KP_STAT_INC(fw, stat_https_connects);
     kp_dbg("[fw] CONNECT target %s:%d", host, port);
 
     if (strncmp(host, "127.", 4) == 0 || strcmp(host, "localhost") == 0 ||
@@ -1804,7 +2001,7 @@ https_retry:
         }
         if (code == 822 || code == 824) {
             KP_CLOSESOCK(up);
-            fw->stat_direct_fallbacks++;
+            KP_STAT_INC(fw, stat_direct_fallbacks);
             kp_forwarder_record_direct_host(fw, host);
             int dup = kp_connect_host(host, port, 10000);
             if (dup < 0) { kp_send_simple_response(client, 502, "Bad Gateway"); KP_CLOSESOCK(client); return; }
@@ -1886,9 +2083,13 @@ https_retry:
 
 
 static int kp_forwarder_refresh(kp_forwarder *fw) {
-    if (!fw || !fw->refresh_fn) return -1;
-    fw->stat_refresh_calls++;
-    return fw->refresh_fn(fw->refresh_ctx);
+    if (!fw) return -1;
+    pthread_mutex_lock(&fw->state_lock);
+    kp_refresh_fn fn = fw->refresh_fn;
+    void *ctx = fw->refresh_ctx;
+    if (fn) fw->stat_refresh_calls++;
+    pthread_mutex_unlock(&fw->state_lock);
+    return fn ? fn(ctx) : -1;
 }
 
 // 带有限重试的被动刷新：瞬时失败（取号接口抖动等）不应直接判死回 502。
@@ -1927,14 +2128,23 @@ static void *kp_client_thread(void *arg) {
 
 static void *kp_forwarder_run(void *arg) {
     kp_forwarder *fw = arg;
-    while (fw->running) {
+    for (;;) {
+        pthread_mutex_lock(&fw->state_lock);
+        int running = fw->running;
+        int listen_fd = fw->listen_fd;
+        pthread_mutex_unlock(&fw->state_lock);
+        if (!running || listen_fd < 0) break;
         struct sockaddr_in peer;
         socklen_t plen = sizeof(peer);
-        int client = accept(fw->listen_fd, (struct sockaddr *)&peer, &plen);
+        int client = accept(listen_fd, (struct sockaddr *)&peer, &plen);
         if (client < 0) {
-            if (!fw->running) break;
+            pthread_mutex_lock(&fw->state_lock);
+            running = fw->running;
+            pthread_mutex_unlock(&fw->state_lock);
+            if (!running) break;
             continue;
         }
+        kp_disable_sigpipe(client);
         // 高速下载并发上限：超出则立即拒绝，避免线程风暴耗尽进程资源。
         pthread_mutex_lock(&fw->client_lock);
         int over = fw->active_clients >= KP_FORWARDER_MAX_CLIENTS;
@@ -2003,6 +2213,8 @@ kp_forwarder *kp_forwarder_new(const char *listen_host, int listen_port,
     fw->active_clients = 0;
     fw->client_fd_count = 0;
     pthread_mutex_init(&fw->cred_mutex, NULL);
+    pthread_mutex_init(&fw->state_lock, NULL);
+    pthread_mutex_init(&fw->lifecycle_lock, NULL);
     pthread_mutex_init(&fw->client_lock, NULL);
     pthread_cond_init(&fw->client_cond, NULL);
     return fw;
@@ -2038,21 +2250,27 @@ void kp_forwarder_set_king_state(kp_forwarder *fw,
 
 void kp_forwarder_set_refresh_hook(kp_forwarder *fw, kp_refresh_fn fn, void *ctx) {
     if (!fw) return;
+    pthread_mutex_lock(&fw->state_lock);
     fw->refresh_fn = fn;
     fw->refresh_ctx = ctx;
-}
-
-static void kp_forwarder_creds(kp_forwarder *fw, char *guid, size_t gc, char *token, size_t tc) {
-    pthread_mutex_lock(&fw->cred_mutex);
-    snprintf(guid, gc, "%s", fw->guid);
-    snprintf(token, tc, "%s", fw->token);
-    pthread_mutex_unlock(&fw->cred_mutex);
+    pthread_mutex_unlock(&fw->state_lock);
 }
 
 int kp_forwarder_start(kp_forwarder *fw) {
-    if (!fw || fw->running) return -1;
+    if (!fw) return -1;
+    pthread_mutex_lock(&fw->lifecycle_lock);
+    pthread_mutex_lock(&fw->state_lock);
+    if (fw->destroying || fw->running || fw->accept_thread_started) {
+        pthread_mutex_unlock(&fw->state_lock);
+        pthread_mutex_unlock(&fw->lifecycle_lock);
+        return -1;
+    }
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        pthread_mutex_unlock(&fw->state_lock);
+        pthread_mutex_unlock(&fw->lifecycle_lock);
+        return -1;
+    }
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     struct sockaddr_in addr;
@@ -2065,6 +2283,8 @@ int kp_forwarder_start(kp_forwarder *fw) {
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
         listen(fd, 16) != 0) {
         KP_CLOSESOCK(fd);
+        pthread_mutex_unlock(&fw->state_lock);
+        pthread_mutex_unlock(&fw->lifecycle_lock);
         return -1;
     }
     struct sockaddr_storage bound_addr;
@@ -2079,34 +2299,44 @@ int kp_forwarder_start(kp_forwarder *fw) {
         }
     }
     fw->listen_fd = fd;
-    fw->running = 1;
     if (pthread_create(&fw->thread, NULL, kp_forwarder_run, fw) != 0) {
-        fw->running = 0;
-        KP_CLOSESOCK(fd);
         fw->listen_fd = -1;
+        pthread_mutex_unlock(&fw->state_lock);
+        pthread_mutex_unlock(&fw->lifecycle_lock);
+        KP_CLOSESOCK(fd);
         return -1;
     }
+    // The new thread cannot observe a partially initialized lifecycle state.
+    fw->accept_thread_started = 1;
+    fw->running = 1;
+    pthread_mutex_unlock(&fw->state_lock);
+    pthread_mutex_unlock(&fw->lifecycle_lock);
     kp_dbg("[fw] forwarder listening on %s:%d", fw->listen_host, fw->listen_port);
     return 0;
 }
 
-void kp_forwarder_stop(kp_forwarder *fw) {
-    if (!fw) return;
-    if (fw->running) {
+static void kp_forwarder_stop_locked(kp_forwarder *fw) {
+    pthread_mutex_lock(&fw->state_lock);
+    int running = fw->running;
+    int listen_fd = fw->listen_fd;
+    pthread_t thread = fw->thread;
+    int should_join = fw->accept_thread_started;
+    if (running) {
         fw->running = 0;
-        if (fw->listen_fd >= 0) {
-            // shutdown 先唤醒阻塞的 accept（Linux 上 close 不唤醒；macOS 无副作用）
-            shutdown(fw->listen_fd, SHUT_RDWR);
-            KP_CLOSESOCK(fw->listen_fd);
-            fw->listen_fd = -1;
-        }
+        fw->listen_fd = -1;
+    }
+    if (should_join) fw->accept_thread_started = 0;
+    pthread_mutex_unlock(&fw->state_lock);
+    if (running && listen_fd >= 0) {
+        // shutdown 先唤醒阻塞的 accept（Linux 上 close 不唤醒；macOS 无副作用）
+        shutdown(listen_fd, SHUT_RDWR);
+        KP_CLOSESOCK(listen_fd);
     }
     // 先 join 主 accept 线程：确保 accept 循环完全停止，不会再登记新 client fd。
     // 否则 stop 遍历 client_fds 之后若有新连接被 accept 但尚未登记，其 fd 不会被
     // shutdown，对应 client 线程永不退出，stop 会死锁。
-    if (fw->thread) {
-        pthread_join(fw->thread, NULL);
-        fw->thread = 0;
+    if (should_join) {
+        pthread_join(thread, NULL);
     }
 
     // shutdown 所有活跃 client fd，让阻塞在 recv/poll 的转发线程返回。
@@ -2123,39 +2353,74 @@ void kp_forwarder_stop(kp_forwarder *fw) {
     pthread_mutex_unlock(&fw->client_lock);
 }
 
+void kp_forwarder_stop(kp_forwarder *fw) {
+    if (!fw) return;
+    pthread_mutex_lock(&fw->lifecycle_lock);
+    kp_forwarder_stop_locked(fw);
+    pthread_mutex_unlock(&fw->lifecycle_lock);
+}
+
 void kp_forwarder_free(kp_forwarder *fw) {
     if (!fw) return;
-    kp_forwarder_stop(fw);
+    pthread_mutex_lock(&fw->lifecycle_lock);
+    fw->destroying = 1;
+    kp_forwarder_stop_locked(fw);
     pthread_mutex_destroy(&fw->cred_mutex);
+    pthread_mutex_destroy(&fw->state_lock);
     pthread_mutex_destroy(&fw->client_lock);
     pthread_cond_destroy(&fw->client_cond);
+    pthread_mutex_unlock(&fw->lifecycle_lock);
+    pthread_mutex_destroy(&fw->lifecycle_lock);
     free(fw);
 }
 
-int kp_forwarder_is_running(kp_forwarder *fw) { return fw ? fw->running : 0; }
-int kp_forwarder_port(kp_forwarder *fw) { return fw ? fw->listen_port : 0; }
+int kp_forwarder_is_running(kp_forwarder *fw) {
+    if (!fw) return 0;
+    pthread_mutex_lock(&fw->state_lock);
+    int running = fw->running;
+    pthread_mutex_unlock(&fw->state_lock);
+    return running;
+}
+int kp_forwarder_port(kp_forwarder *fw) {
+    if (!fw) return 0;
+    pthread_mutex_lock(&fw->state_lock);
+    int port = fw->listen_port;
+    pthread_mutex_unlock(&fw->state_lock);
+    return port;
+}
 
 void kp_forwarder_get_stats(kp_forwarder *fw, kp_forwarder_stats *stats) {
     if (!stats) return;
     memset(stats, 0, sizeof(*stats));
     if (!fw) return;
+    pthread_mutex_lock(&fw->state_lock);
     stats->http_requests = fw->stat_http_requests;
     stats->https_connects = fw->stat_https_connects;
     stats->direct_fallbacks = fw->stat_direct_fallbacks;
     stats->refresh_calls = fw->stat_refresh_calls;
     stats->proxy_errors = fw->stat_proxy_errors;
+    pthread_mutex_unlock(&fw->state_lock);
 }
 
 int kp_forwarder_direct_host_count(kp_forwarder *fw) {
-    return fw ? fw->direct_host_log_count : 0;
+    if (!fw) return 0;
+    pthread_mutex_lock(&fw->state_lock);
+    int count = fw->direct_host_log_count;
+    pthread_mutex_unlock(&fw->state_lock);
+    return count;
 }
 
 int kp_forwarder_get_direct_host(kp_forwarder *fw, int index,
                                  char *out, size_t out_cap) {
     if (!fw || !out || out_cap == 0) return -1;
-    if (index < 0 || index >= fw->direct_host_log_count) return -1;
+    pthread_mutex_lock(&fw->state_lock);
+    if (index < 0 || index >= fw->direct_host_log_count) {
+        pthread_mutex_unlock(&fw->state_lock);
+        return -1;
+    }
     int start = (fw->direct_host_log_rr - fw->direct_host_log_count + index) % KP_DIRECT_HOST_LOG_MAX;
     if (start < 0) start += KP_DIRECT_HOST_LOG_MAX;
     snprintf(out, out_cap, "%s", fw->direct_host_log[start]);
+    pthread_mutex_unlock(&fw->state_lock);
     return 0;
 }

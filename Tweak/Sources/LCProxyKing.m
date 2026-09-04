@@ -87,15 +87,21 @@ static BOOL LCProxyKingHexStringValid(NSString *s) {
 }
 
 - (BOOL)isRunning {
-    return self.forwarder != NULL && kp_forwarder_is_running(self.forwarder) == 1;
+    [self.lock lock];
+    BOOL running = self.forwarder != NULL && kp_forwarder_is_running(self.forwarder) == 1;
+    [self.lock unlock];
+    return running;
 }
 
 - (void)applyConfig:(NSDictionary *)settings {
+    // A configuration change can race foreground, network, and console paths.
+    // Serializing the lifecycle prevents canceled timers from being orphaned.
+    @synchronized (self) {
     NSString *mode = [settings[@"proxyMode"] isKindOfClass:[NSString class]] ? settings[@"proxyMode"] : @"custom";
     // Tailscale mode also needs the local KingCard forwarder: Tailscale's
     // control-plane and DERP connections are forced through this HTTP proxy.
     BOOL shouldRun = ([mode isEqualToString:@"kingcard"] || [mode isEqualToString:@"tailscale"]) && [settings[@"proxyEnabled"] boolValue];
-    if (shouldRun && [mode isEqualToString:@"kingcard"] && [settings[@"kingAutoDirectOnNonCellular"] boolValue] && !lcproxy_stats_is_cellular()) {
+    if (shouldRun && [mode isEqualToString:@"kingcard"] && [settings[@"kingAutoDirectOnNonCellular"] boolValue] && lcproxy_network_should_direct()) {
         shouldRun = NO;
     }
     NSString *signature = [self settingsSignature:settings];
@@ -167,8 +173,7 @@ static BOOL LCProxyKingHexStringValid(NSString *s) {
     }
 
     [self.lock lock];
-    // 创建/启动新转发器期间锁已释放，可能已有另一次 applyConfig 改动了模式。
-    // 只有当前仍然应该运行、且还没有安装新转发器时，才把 newForwarder 装上。
+    // Keep this defensive install check even though applyConfig is serialized.
     if (self.forwarder == NULL && [self.lastSettingsSignature isEqualToString:signature]) {
         self.forwarder = newForwarder;
         [self.lock unlock];
@@ -183,6 +188,7 @@ static BOOL LCProxyKingHexStringValid(NSString *s) {
     [self.lock unlock];
     kp_forwarder_stop(newForwarder);
     kp_forwarder_free(newForwarder);
+    }
 }
 
 - (NSString *)settingsSignature:(NSDictionary *)settings {
@@ -213,6 +219,7 @@ static BOOL LCProxyKingHexStringValid(NSString *s) {
 }
 
 - (void)startRefreshTimer {
+    @synchronized (self) {
     [self stopRefreshTimer];
 
     NSTimeInterval interval = LCProxyKingRefreshInterval;
@@ -245,16 +252,21 @@ static BOOL LCProxyKingHexStringValid(NSString *s) {
                               (uint64_t)(LCProxyKingRefreshLeeway * NSEC_PER_SEC));
     __weak LCProxyKing *weakSelf = self;
     dispatch_source_set_event_handler(timer, ^{
-        [weakSelf refreshCredentials];
+        if ([weakSelf isRunning]) {
+            [weakSelf refreshCredentials];
+        }
     });
     dispatch_resume(timer);
     self.refreshTimer = timer;
+    }
 }
 
 - (void)stopRefreshTimer {
+    @synchronized (self) {
     if (self.refreshTimer) {
         dispatch_source_cancel(self.refreshTimer);
         self.refreshTimer = nil;
+    }
     }
 }
 
@@ -755,7 +767,7 @@ static const NSUInteger LCProxyKingRefreshLogMax = 20;
 - (NSDictionary *)status {
     [self.lock lock];
     NSMutableDictionary *d = [NSMutableDictionary dictionary];
-    d[@"running"] = @([self isRunning]);
+    d[@"running"] = @(self.forwarder != NULL && kp_forwarder_is_running(self.forwarder) == 1);
     d[@"forwarderPort"] = @(self.forwarder ? kp_forwarder_port(self.forwarder) : 0);
     d[@"lastRefreshSuccess"] = @(self.lastRefreshSuccess);
     d[@"lastRefresh"] = self.lastRefresh ?: @"";

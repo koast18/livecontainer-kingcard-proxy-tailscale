@@ -127,6 +127,7 @@ static const NSUInteger LCProxyDefaultPort = 19092;
     BOOL enabled = [settings[@"proxyEnabled"] boolValue];
     NSString *mode = [settings[@"proxyMode"] isKindOfClass:[NSString class]] ? settings[@"proxyMode"] : @"custom";
     NSString *effectiveMode = [[LCProxyConfig shared] effectiveProxyModeForSettings:settings];
+    BOOL tailscale = enabled && [effectiveMode isEqualToString:@"tailscale"];
 
     NSString *upstreamHost = nil;
     NSInteger upstreamPort = 0;
@@ -136,12 +137,19 @@ static const NSUInteger LCProxyDefaultPort = 19092;
     } else if (enabled && [effectiveMode isEqualToString:@"kingcard"]) {
         upstreamHost = @"127.0.0.1";
         upstreamPort = [[LCProxyKing shared] localForwarderPort];
+    } else if (tailscale) {
+        upstreamHost = @"127.0.0.1";
+        upstreamPort = [[LCTailscaleManager shared] localProxyPort];
     } else if (enabled) {
         upstreamHost = [settings[@"proxyHost"] isKindOfClass:[NSString class]] && [settings[@"proxyHost"] length] ? settings[@"proxyHost"] : nil;
         upstreamPort = [settings[@"proxyPort"] respondsToSelector:@selector(integerValue)] ? [settings[@"proxyPort"] integerValue] : 0;
     }
     if (!direct && (!upstreamHost.length || (upstreamPort <= 0 && ![effectiveMode isEqualToString:@"kingcard"]))) {
         return @{@"url": urlString ?: @"", @"rc": @(-1), @"ip": @"", @"body": @"代理未启用或代理地址无效", @"ok": @NO};
+    }
+
+    if (tailscale && (![[LCTailscaleManager shared] isRunning] || [[LCTailscaleManager shared] localProxyPort] <= 0 || ![[LCTailscaleManager shared] proxyPassword].length)) {
+        return @{@"url": urlString ?: @"", @"rc": @(-1), @"ip": @"", @"body": @"Tailscale 未连接或 SOCKS5 服务未就绪", @"ok": @NO, @"effectiveMode": effectiveMode};
     }
 
     // 王卡模式：确保转发器运行且凭证已加载。最多等 8 秒，避免测试接口被网络刷新阻塞。
@@ -169,6 +177,12 @@ static const NSUInteger LCProxyDefaultPort = 19092;
     if (direct) {
         rc = kp_http_get_direct(host.UTF8String, (int)port, path.UTF8String,
                                 6000, body, sizeof(body));
+    } else if (tailscale) {
+        rc = kp_http_get_via_socks5("127.0.0.1", [[LCTailscaleManager shared] localProxyPort],
+                                    [[LCTailscaleManager shared] proxyUser].UTF8String,
+                                    [[LCTailscaleManager shared] proxyPassword].UTF8String,
+                                    host.UTF8String, (int)port, path.UTF8String,
+                                    6000, body, sizeof(body));
     } else {
         rc = kp_http_get_via_proxy(upstreamHost.UTF8String, (int)upstreamPort,
                                    host.UTF8String, (int)port, path.UTF8String,
@@ -193,6 +207,7 @@ static const NSUInteger LCProxyDefaultPort = 19092;
     BOOL enabled = [settings[@"proxyEnabled"] boolValue];
     NSString *mode = [settings[@"proxyMode"] isKindOfClass:[NSString class]] ? settings[@"proxyMode"] : @"custom";
     NSString *effectiveMode = [[LCProxyConfig shared] effectiveProxyModeForSettings:settings];
+    BOOL tailscale = enabled && [effectiveMode isEqualToString:@"tailscale"];
 
     NSString *upstreamHost = nil;
     NSInteger upstreamPort = 0;
@@ -202,12 +217,19 @@ static const NSUInteger LCProxyDefaultPort = 19092;
     } else if (enabled && [effectiveMode isEqualToString:@"kingcard"]) {
         upstreamHost = @"127.0.0.1";
         upstreamPort = [[LCProxyKing shared] localForwarderPort];
+    } else if (tailscale) {
+        upstreamHost = @"127.0.0.1";
+        upstreamPort = [[LCTailscaleManager shared] localProxyPort];
     } else if (enabled) {
         upstreamHost = [settings[@"proxyHost"] isKindOfClass:[NSString class]] && [settings[@"proxyHost"] length] ? settings[@"proxyHost"] : nil;
         upstreamPort = [settings[@"proxyPort"] respondsToSelector:@selector(integerValue)] ? [settings[@"proxyPort"] integerValue] : 0;
     }
     if (!direct && (!upstreamHost.length || (upstreamPort <= 0 && ![effectiveMode isEqualToString:@"kingcard"]))) {
         return @{@"ok": @NO, @"error": @"代理未启用或代理地址无效", @"results": @[]};
+    }
+
+    if (tailscale && (![[LCTailscaleManager shared] isRunning] || [[LCTailscaleManager shared] localProxyPort] <= 0 || ![[LCTailscaleManager shared] proxyPassword].length)) {
+        return @{@"ok": @NO, @"error": @"Tailscale 未连接或 SOCKS5 服务未就绪", @"results": @[], @"mode": mode, @"effectiveMode": effectiveMode};
     }
 
     // 王卡模式：确保转发器运行且凭证已加载。最多等 8 秒，避免测试接口被网络刷新阻塞。
@@ -246,6 +268,12 @@ static const NSUInteger LCProxyDefaultPort = 19092;
         if (direct) {
             rc = kp_http_get_direct(host.UTF8String, (int)port, path.UTF8String,
                                     8000, body, sizeof(body));
+        } else if (tailscale) {
+            rc = kp_http_get_via_socks5("127.0.0.1", [[LCTailscaleManager shared] localProxyPort],
+                                        [[LCTailscaleManager shared] proxyUser].UTF8String,
+                                        [[LCTailscaleManager shared] proxyPassword].UTF8String,
+                                        host.UTF8String, (int)port, path.UTF8String,
+                                        8000, body, sizeof(body));
         } else {
             rc = kp_http_get_via_proxy(upstreamHost.UTF8String, (int)upstreamPort,
                                        host.UTF8String, (int)port, path.UTF8String,
