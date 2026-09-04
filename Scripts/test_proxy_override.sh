@@ -11,7 +11,7 @@ else
     exit 1
 fi
 
-$CC -std=c99 -O0 -g \
+$CC -std=c99 -O0 -g -D_POSIX_C_SOURCE=200809L -D_DARWIN_C_SOURCE \
   -DGN_NODELEN_T=socklen_t -DGN_SERVLEN_T=socklen_t -DGN_FLAGS_T=int \
   -ITweak/ProxyCore/src \
   -ITweak/ProxyCore/vendor/proxychains-ng/src \

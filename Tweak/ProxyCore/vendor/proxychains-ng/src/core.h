@@ -103,7 +103,12 @@ void proxychains_write_log(char *str, ...);
 typedef int (*close_t)(int);
 typedef int (*close_range_t)(unsigned, unsigned, int);
 typedef int (*connect_t)(int, const struct sockaddr *, socklen_t);
+#ifdef __APPLE__
 typedef int (*connectx_t)(int, const sa_endpoints_t *, sae_associd_t, unsigned int, const struct iovec *, unsigned int, size_t *, sae_connid_t *);
+#else
+/* connectx is a Darwin-only hook; portable unit tests do not link it. */
+typedef void *connectx_t;
+#endif
 typedef struct hostent* (*gethostbyname_t)(const char *);
 typedef void (*freeaddrinfo_t)(struct addrinfo *);
 typedef struct hostent *(*gethostbyaddr_t) (const void *, socklen_t, int);

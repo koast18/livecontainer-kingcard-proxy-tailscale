@@ -1,0 +1,26 @@
+{
+	"version": 1,
+	"ports": {
+		"preview": 3000,
+		"additional": {}
+	},
+	"scripts": {
+		"setup": {
+			"enabled": true,
+			"command": "if command -v apt-get >/dev/null 2>&1 && ! dpkg -s zlib1g-dev >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zlib1g-dev; fi"
+		},
+		"run": {
+			"enabled": true,
+			"command": null
+		},
+		"archive": {
+			"enabled": true,
+			"command": null
+		},
+		"check": {
+			"enabled": true,
+			"command": null
+		}
+	},
+	"mcpServers": []
+}

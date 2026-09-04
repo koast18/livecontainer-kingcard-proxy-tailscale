@@ -13,6 +13,7 @@ static const NSTimeInterval LCProxyNetworkMonitorInterval = 2.0;
 
 @interface LCProxyConfig ()
 @property (nonatomic, strong) dispatch_source_t networkTimer;
+@property (nonatomic, strong) NSLock *runtimeApplyLock;
 @property (nonatomic, assign) int lastAppliedShouldDirect;
 @property (nonatomic, copy) NSString *lastAppliedRuntimeSignature;
 @property (nonatomic, assign) int lastAppliedForwarderPort;
@@ -30,6 +31,15 @@ static const NSTimeInterval LCProxyNetworkMonitorInterval = 2.0;
         instance = [[LCProxyConfig alloc] init];
     });
     return instance;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _runtimeApplyLock = [[NSLock alloc] init];
+        _lastAppliedShouldDirect = -1;
+    }
+    return self;
 }
 
 - (NSString *)dataDirectory {
@@ -147,7 +157,10 @@ static const NSTimeInterval LCProxyNetworkMonitorInterval = 2.0;
     if ([effectiveMode isEqualToString:@"kingcard"]) {
         // Local KingCard forwarder: handles token fetch + Q-GUID/Q-Token headers.
         host = @"127.0.0.1";
-        port = 18080;
+        int forwarderPort = [[LCProxyKing shared] localForwarderPort];
+        // Saving a newly enabled KingCard configuration happens before its
+        // forwarder can bind. Keep the persisted config safe until apply starts it.
+        port = forwarderPort > 0 ? forwarderPort : 1;
     } else if ([effectiveMode isEqualToString:@"custom"]) {
         type = [settings[@"proxyType"] isKindOfClass:[NSString class]] ? settings[@"proxyType"] : @"http";
         host = [settings[@"proxyHost"] isKindOfClass:[NSString class]] && [settings[@"proxyHost"] length] ? settings[@"proxyHost"] : @"127.0.0.1";
@@ -222,6 +235,9 @@ static const NSTimeInterval LCProxyNetworkMonitorInterval = 2.0;
 }
 
 - (void)applyToRuntime {
+    // Network callbacks, foreground transitions, and console requests can all
+    // apply settings. One complete transaction must finish before another starts.
+    [self.runtimeApplyLock lock];
     NSDictionary *s = [self load];
     NSString *signature = [self runtimeSignatureForSettings:s];
     BOOL settingsChanged = !self.lastAppliedRuntimeSignature || ![signature isEqualToString:self.lastAppliedRuntimeSignature];
@@ -276,6 +292,7 @@ static const NSTimeInterval LCProxyNetworkMonitorInterval = 2.0;
     }
     self.lastAppliedRuntimeSignature = signature;
     self.lastAppliedForwarderPort = desiredForwarderPort;
+    [self.runtimeApplyLock unlock];
 }
 
 static nw_path_monitor_t g_networkMonitor;

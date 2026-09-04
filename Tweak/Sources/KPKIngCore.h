@@ -88,6 +88,12 @@ int kp_http_get_via_proxy(const char *upstream_host, int upstream_port,
                           const char *guid, const char *token,
                           int timeout_ms, char *out, size_t out_cap);
 
+/// 经带用户名密码认证的 SOCKS5 代理 GET HTTP 目标，取响应体。
+int kp_http_get_via_socks5(const char *proxy_host, int proxy_port,
+                           const char *username, const char *password,
+                           const char *target_host, int target_port, const char *path,
+                           int timeout_ms, char *out, size_t out_cap);
+
 /// 直连 GET http 目标（无代理），取响应体（供出口 IP 检测等）。
 /// 成功返回 0，out 回填响应体（NUL 结尾）。
 int kp_http_get_direct(const char *target_host, int target_port, const char *path,
